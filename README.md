@@ -20,9 +20,8 @@ Firebase Realtime Database 를 사이에 두고 앱과 자료를 주고받습니
 5. 같은 화면에서 **iOS 앱도 추가**합니다. 번들 ID 는 `com.jeongilmug.harutodo`.
    내려받는 `GoogleService-Info.plist` 안의 `CLIENT_ID` / `REVERSED_CLIENT_ID` 를
    앱의 구글 로그인에 씁니다(웹과 같은 계정 → 같은 UID → 같은 자료).
-6. 이 페이지를 열어 구글 로그인을 하면 화면에 **내 UID** 가 나옵니다.
-   그 값을 `firebase-config.js` 의 `HARU_OWNER_UID` 에 적고,
-   Realtime Database → 규칙에 `데이터베이스규칙.json` 내용을 붙여 넣습니다.
+6. Realtime Database → **규칙** 에 `데이터베이스규칙.json` 내용을 붙여 넣고 게시합니다.
+   규칙이 UID 별로 갈라 주므로, 로그인한 사람은 자기 자료만 읽고 씁니다.
 7. 아이폰 앱 설정에서 같은 계정으로 로그인하면 자료가 올라옵니다.
 
 ## 로그인 방식
