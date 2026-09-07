@@ -26,7 +26,8 @@
   }
   .wrap { max-width: 720px; margin: 0 auto; padding: 12px 14px 80px; }
   header { display: flex; align-items: center; gap: 10px; padding: 8px 2px 14px; }
-  header h1 { font-size: 17px; margin: 0; font-weight: 700; }
+  header #dateTitle { font-size: 17px; font-weight: 700; }
+  .btn.icon-only { font-size: 17px; padding: 7px 12px; line-height: 1; }
   header .spacer { flex: 1; }
   button { font: inherit; color: inherit; }
   .btn {
@@ -142,16 +143,19 @@
   #ask .row2 { display: flex; gap: 8px; align-items: center; }
 
   .row.dragging { opacity: .4; }
-  .row.drop-before { box-shadow: inset 0 3px 0 var(--accent); }
-  .cat-head.drop-target { background: color-mix(in srgb, var(--accent) 18%, transparent); border-radius: 8px; }
+  .row.drop-before { box-shadow: inset 0 3px 0 var(--dropc, var(--accent)); }
+  .cat-head.drop-target {
+    background: color-mix(in srgb, var(--dropc, var(--accent)) 20%, transparent);
+    border-radius: 8px;
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <h1>하루 할일</h1>
+    <strong id="dateTitle"></strong>
     <span class="spacer"></span>
-    <span id="who" class="small muted"></span>
+    <button id="settings" class="btn icon-only" title="설정" hidden>⚙︎</button>
     <button id="auth" class="btn">로그인</button>
   </header>
   <div id="app"></div>
@@ -168,7 +172,8 @@ import { getDatabase, ref, onValue, update }
 
 const appEl = document.getElementById("app");
 const authBtn = document.getElementById("auth");
-const whoEl = document.getElementById("who");
+const settingsBtn = document.getElementById("settings");
+const dateTitleEl = document.getElementById("dateTitle");
 
 const cfg = window.HARU_FIREBASE || {};
 if (!cfg.apiKey || cfg.apiKey.startsWith("여기에")) {
@@ -190,20 +195,35 @@ let uid = null;
 let selected = startOfToday();
 let month = new Date(selected.getFullYear(), selected.getMonth(), 1);
 
-authBtn.addEventListener("click", () => {
-  if (auth.currentUser) signOut(auth);
-  else signInWithPopup(auth, new GoogleAuthProvider()).catch(e => toast("로그인 실패: " + e.message));
+authBtn.addEventListener("click", () =>
+  signInWithPopup(auth, new GoogleAuthProvider()).catch(e => toast("로그인 실패: " + e.message)));
+
+settingsBtn.addEventListener("click", async () => {
+  const user = auth.currentUser;
+  const choice = await askChoice("설정", [
+    { key: "who", label: `계정: ${user?.email || user?.displayName || "연결됨"}` },
+    { key: "today", label: "오늘로 이동" },
+    { key: "out", label: "로그아웃", danger: true }
+  ]);
+  if (choice === "today") {
+    selected = startOfToday();
+    month = new Date(selected.getFullYear(), selected.getMonth(), 1);
+    render();
+  } else if (choice === "out") {
+    signOut(auth);
+  }
 });
 
 onAuthStateChanged(auth, user => {
   if (!user) {
-    whoEl.textContent = "";
-    authBtn.textContent = "로그인";
+    authBtn.hidden = false;
+    settingsBtn.hidden = true;
+    dateTitleEl.textContent = "하루 할일";
     appEl.innerHTML = `<div class="notice">구글 계정으로 로그인하면 아이폰 앱에 기록한 내용이 보입니다.</div>`;
     return;
   }
-  whoEl.textContent = user.displayName || user.email || "";
-  authBtn.textContent = "로그아웃";
+  authBtn.hidden = true;
+  settingsBtn.hidden = false;
   uid = user.uid;
   subscribe(user.uid);
 });
@@ -267,8 +287,44 @@ function activeCategoriesOn(dateKey) {
 /* ---------- 화면 ---------- */
 function render() {
   const dots = doneColorsByDate();
+  dateTitleEl.textContent = boardTitle(selected);
   appEl.innerHTML = calendarHTML(dots) + listHTML();
   bind();
+}
+
+/// 앱과 같은 표기: 오늘이면 "9월 7일 (월, 오늘)".
+function boardTitle(d) {
+  const WD = ["일","월","화","수","목","금","토"];
+  const base = `${d.getMonth() + 1}월 ${d.getDate()}일 (${WD[d.getDay()]}`;
+  return sameDay(d, new Date()) ? `${base}, 오늘)` : `${base})`;
+}
+
+/// 연도와 월을 골라 옮기는 창.
+function askMonth() {
+  const thisYear = new Date().getFullYear();
+  return new Promise(resolve => {
+    askEl.innerHTML = `
+      <div class="head">연도 · 월 이동</div>
+      <div class="content row2">
+        <select id="mYear">${Array.from({ length: 19 }, (_, i) => thisYear - 12 + i)
+          .map(y => `<option value="${y}">${y}년</option>`).join("")}</select>
+        <select id="mMonth">${Array.from({ length: 12 }, (_, i) => i + 1)
+          .map(m => `<option value="${m}">${m}월</option>`).join("")}</select>
+      </div>
+      <div class="foot">
+        <button data-cancel>취소</button>
+        <button class="primary" data-ok>이동</button>
+      </div>`;
+    askEl.querySelector("#mYear").value = String(month.getFullYear());
+    askEl.querySelector("#mMonth").value = String(month.getMonth() + 1);
+    askEl.querySelector("[data-cancel]").onclick = () => closeAsk(resolve, null);
+    askEl.querySelector("[data-ok]").onclick = () => closeAsk(resolve, {
+      year: Number(askEl.querySelector("#mYear").value),
+      month: Number(askEl.querySelector("#mMonth").value)
+    });
+    askEl.oncancel = e => { e.preventDefault(); closeAsk(resolve, null); };
+    askEl.showModal();
+  });
 }
 
 function calendarHTML(dots) {
@@ -294,7 +350,9 @@ function calendarHTML(dots) {
   }
   return `<div class="cal">
     <div class="cal-head">
-      <strong>${month.getFullYear()}년 ${month.getMonth() + 1}월</strong>
+      <button id="monthBtn" style="border:0;background:transparent;cursor:pointer;font:inherit;color:inherit;padding:2px 4px;border-radius:8px">
+        <strong>${month.getFullYear()}년 ${month.getMonth() + 1}월</strong> <span class="muted" style="font-size:11px">▾</span>
+      </button>
       <span style="flex:1"></span>
       <button data-move="-1">‹</button>
       <button data-move="today">오늘</button>
@@ -366,6 +424,15 @@ function bind() {
     month = new Date(selected.getFullYear(), selected.getMonth(), 1);
     render();
   }));
+  const monthBtn = appEl.querySelector("#monthBtn");
+  if (monthBtn) monthBtn.addEventListener("click", async () => {
+    const picked = await askMonth();
+    if (!picked) return;
+    const last = new Date(picked.year, picked.month, 0).getDate();
+    selected = new Date(picked.year, picked.month - 1, Math.min(selected.getDate(), last));
+    month = new Date(picked.year, picked.month - 1, 1);
+    render();
+  });
   appEl.querySelectorAll("[data-move]").forEach(el => el.addEventListener("click", () => {
     const v = el.dataset.move;
     if (v === "today") { selected = startOfToday(); month = new Date(selected.getFullYear(), selected.getMonth(), 1); }
@@ -393,6 +460,10 @@ function bindDragAndDrop() {
     row.addEventListener("dragover", e => {
       if (!dragging || row.dataset.task === dragging) return;
       e.preventDefault();
+      // 놓일 자리 표시를 그 카테고리 색으로 그린다.
+      const target = state.tasks[row.dataset.task];
+      const color = target && state.categories[target.categoryId]?.colorHex;
+      if (color) row.style.setProperty("--dropc", color);
       row.classList.add("drop-before");
     });
     row.addEventListener("dragleave", () => row.classList.remove("drop-before"));
@@ -408,6 +479,8 @@ function bindDragAndDrop() {
     head.addEventListener("dragover", e => {
       if (!dragging) return;
       e.preventDefault();
+      const color = state.categories[head.dataset.cat]?.colorHex;
+      if (color) head.style.setProperty("--dropc", color);
       head.classList.add("drop-target");
     });
     head.addEventListener("dragleave", () => head.classList.remove("drop-target"));
