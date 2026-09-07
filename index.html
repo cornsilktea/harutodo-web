@@ -75,6 +75,7 @@
   }
   .check {
     width: 26px; height: 26px; border-radius: 50%; flex: none; cursor: pointer;
+    transition: opacity .15s;
     border: 2px solid var(--accent); background: transparent; position: relative;
   }
   .check.done::after {
@@ -111,7 +112,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
-import { getDatabase, ref, onValue }
+import { getDatabase, ref, onValue, update }
   from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
 
 const appEl = document.getElementById("app");
@@ -134,6 +135,7 @@ const auth = getAuth(fb);
 const db = getDatabase(fb);
 
 let state = { categories: {}, tasks: {}, instances: {} };
+let uid = null;
 let selected = startOfToday();
 let month = new Date(selected.getFullYear(), selected.getMonth(), 1);
 
@@ -151,6 +153,7 @@ onAuthStateChanged(auth, user => {
   }
   whoEl.textContent = user.displayName || user.email || "";
   authBtn.textContent = "로그아웃";
+  uid = user.uid;
   subscribe(user.uid);
 });
 
@@ -264,7 +267,8 @@ function listHTML() {
     const done = mine.filter(r => r.isDone).length;
     const body = mine.length
       ? mine.map(r => `<div class="row ${r.isDone ? "done" : ""}">
-          <span class="check ${r.isDone ? "done" : ""}" style="border-color:${cat.colorHex}${r.isDone ? `;background:${cat.colorHex}` : ""}"></span>
+          <span class="check ${r.isDone ? "done" : ""}" data-toggle="${r.id}" title="완료 표시"
+                style="border-color:${cat.colorHex}${r.isDone ? `;background:${cat.colorHex}` : ""}"></span>
           <span class="body">
             <div class="title">${escapeHTML(r.task.title)}</div>
             <div class="meta">${[recurrenceText(r.task), r.photoCount ? `사진 ${r.photoCount}장` : ""]
@@ -282,6 +286,22 @@ function listHTML() {
 }
 
 function bind() {
+  appEl.querySelectorAll("[data-toggle]").forEach(el => el.addEventListener("click", async () => {
+    const id = el.dataset.toggle;
+    const current = state.instances[id];
+    if (!current || !uid) return;
+    el.style.opacity = .4;
+    try {
+      // 앱과 같은 규칙: 나중에 고친 쪽이 이기도록 수정 시각을 함께 올린다.
+      await update(ref(db, `users/${uid}/instances/${id}`), {
+        isDone: !current.isDone,
+        updatedAt: Date.now()
+      });
+    } catch (e) {
+      alert("바꾸지 못했습니다: " + e.message);
+      el.style.opacity = 1;
+    }
+  }));
   appEl.querySelectorAll("[data-date]").forEach(el => el.addEventListener("click", () => {
     selected = parseYMD(el.dataset.date);
     month = new Date(selected.getFullYear(), selected.getMonth(), 1);
