@@ -126,6 +126,22 @@
     background: var(--bg); color: var(--text); font: inherit;
   }
   #ask .foot button.primary { background: var(--accent); color: #fff; font-weight: 600; }
+  #ask label { font-size: 13px; color: var(--muted); }
+  #ask select, #ask input[type=date], #ask input[type=number] {
+    font: inherit; color: inherit; width: 100%; padding: 9px 11px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--bg);
+  }
+  #ask .chips { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+  #ask .chip {
+    border: 0; border-radius: 8px; padding: 9px 0; cursor: pointer; font: inherit;
+    background: var(--bg); color: var(--text);
+  }
+  #ask .chip.on { background: var(--accent); color: #fff; font-weight: 700; }
+  #ask .row2 { display: flex; gap: 8px; align-items: center; }
+
+  .row.dragging { opacity: .4; }
+  .row.drop-before { box-shadow: inset 0 3px 0 var(--accent); }
+  .cat-head.drop-target { background: color-mix(in srgb, var(--accent) 18%, transparent); border-radius: 8px; }
 </style>
 </head>
 <body>
@@ -299,7 +315,8 @@ function listHTML() {
       .sort((a, b) => (a.isDone - b.isDone) || ((a.task.sortOrder ?? 0) - (b.task.sortOrder ?? 0)));
     const done = mine.filter(r => r.isDone).length;
     const body = mine.length
-      ? mine.map(r => `<div class="row ${r.isDone ? "done" : ""}">
+      ? mine.map(r => `<div class="row ${r.isDone ? "done" : ""}" draggable="true"
+             data-task="${r.taskId}" data-row="${r.id}">
           <span class="check ${r.isDone ? "done" : ""}" data-toggle="${r.id}" title="완료 표시"
                 style="border-color:${cat.colorHex}${r.isDone ? `;background:${cat.colorHex}` : ""}"></span>
           <span class="body">
@@ -310,7 +327,7 @@ function listHTML() {
           <button class="icon-btn" data-more="${r.id}" title="이름 바꾸기 · 삭제">⋯</button>
         </div>`).join("")
       : `<div class="empty">할 일이 없습니다</div>`;
-    return `<div class="cat-head">
+    return `<div class="cat-head" data-cat="${cat.id}">
         <span class="name" style="color:${cat.colorHex}">${escapeHTML(cat.name)}</span>
         <span class="sp"></span>
         <span class="badge">완료 ${done}</span>
@@ -337,6 +354,7 @@ function bind() {
       el.style.opacity = 1;
     }
   }));
+  bindDragAndDrop();
   appEl.querySelectorAll("[data-add]").forEach(el =>
     el.addEventListener("click", () => addTask(el.dataset.add)));
   appEl.querySelectorAll("[data-more]").forEach(el =>
@@ -352,6 +370,79 @@ function bind() {
     else month = new Date(month.getFullYear(), month.getMonth() + Number(v), 1);
     render();
   }));
+}
+
+/* ---------- 끌어서 옮기기 ---------- */
+let dragging = null;
+
+function bindDragAndDrop() {
+  appEl.querySelectorAll(".row[data-task]").forEach(row => {
+    row.addEventListener("dragstart", e => {
+      dragging = row.dataset.task;
+      row.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", dragging);
+    });
+    row.addEventListener("dragend", () => {
+      dragging = null;
+      appEl.querySelectorAll(".dragging, .drop-before, .drop-target")
+        .forEach(el => el.classList.remove("dragging", "drop-before", "drop-target"));
+    });
+    row.addEventListener("dragover", e => {
+      if (!dragging || row.dataset.task === dragging) return;
+      e.preventDefault();
+      row.classList.add("drop-before");
+    });
+    row.addEventListener("dragleave", () => row.classList.remove("drop-before"));
+    row.addEventListener("drop", e => {
+      e.preventDefault();
+      row.classList.remove("drop-before");
+      const target = state.tasks[row.dataset.task];
+      if (dragging && target) moveTask(dragging, target.categoryId, row.dataset.task);
+    });
+  });
+
+  appEl.querySelectorAll("[data-cat]").forEach(head => {
+    head.addEventListener("dragover", e => {
+      if (!dragging) return;
+      e.preventDefault();
+      head.classList.add("drop-target");
+    });
+    head.addEventListener("dragleave", () => head.classList.remove("drop-target"));
+    head.addEventListener("drop", e => {
+      e.preventDefault();
+      head.classList.remove("drop-target");
+      if (dragging) moveTask(dragging, head.dataset.cat, null);
+    });
+  });
+}
+
+/// 끌어다 놓은 결과를 순서값에 반영한다.
+/// 그날 보이는 항목들끼리만 번호를 다시 매겨, 안 보이는 지난 할 일의 순서는 건드리지 않는다.
+async function moveTask(taskId, targetCategoryId, beforeTaskId) {
+  const moved = state.tasks[taskId];
+  if (!moved) return;
+  const dateKey = ymd(selected);
+  const rows = instancesOn(dateKey).filter(r => r.task.categoryId === targetCategoryId);
+  const slots = rows.filter(r => r.taskId !== taskId).map(r => r.task.sortOrder ?? 0);
+
+  let order = rows
+    .filter(r => r.taskId !== taskId)
+    .sort((a, b) => (a.task.sortOrder ?? 0) - (b.task.sortOrder ?? 0))
+    .map(r => r.taskId);
+  const at = beforeTaskId ? order.indexOf(beforeTaskId) : -1;
+  if (at >= 0) order.splice(at, 0, taskId); else order.push(taskId);
+
+  const base = slots.length ? Math.min(...slots) : 0;
+  const paths = {};
+  order.forEach((id, index) => {
+    paths[`tasks/${id}/sortOrder`] = base + index;
+    paths[`tasks/${id}/updatedAt`] = now();
+  });
+  if (moved.categoryId !== targetCategoryId) {
+    paths[`tasks/${taskId}/categoryId`] = targetCategoryId;
+  }
+  await write(paths, "옮기지 못했습니다");
 }
 
 /* ---------- 페이지 안 대화상자 ---------- */
@@ -427,6 +518,80 @@ function toast(text) {
   askEl.showModal();
 }
 
+/// 반복 규칙을 고치는 창. 취소하면 null.
+function askRecurrence(task) {
+  const WEEK = ["일","월","화","수","목","금","토"];
+  return new Promise(resolve => {
+    let kind = task.recurrence || "none";
+    let mask = task.weekdayMask ?? 0;
+    askEl.innerHTML = `
+      <div class="head">반복 설정</div>
+      <div class="content">
+        <label>반복</label>
+        <select id="rKind">
+          <option value="none">반복 없음</option>
+          <option value="daily">매일</option>
+          <option value="weekly">요일 지정</option>
+          <option value="monthly">매월 특정 일자</option>
+        </select>
+        <div id="rWeek" style="display:none">
+          <label>요일</label>
+          <div class="chips">${WEEK.map((w, i) =>
+            `<button type="button" class="chip" data-w="${i}">${w}</button>`).join("")}</div>
+        </div>
+        <div id="rMonth" style="display:none">
+          <label>매월 며칠</label>
+          <input id="rDay" type="number" min="1" max="31" value="${task.monthDay || 1}">
+        </div>
+        <div id="rRange" style="display:none">
+          <label>시작일</label>
+          <input id="rStart" type="date" value="${task.startDate || ymd(selected)}">
+          <label style="margin-top:8px">종료일</label>
+          <div class="row2">
+            <input id="rEnd" type="date" value="${task.endDate || ""}">
+            <button type="button" class="opt" id="rClear" style="width:auto;padding:9px 12px">없음</button>
+          </div>
+        </div>
+      </div>
+      <div class="foot">
+        <button data-cancel>취소</button>
+        <button class="primary" data-ok>저장</button>
+      </div>`;
+
+    const kindEl = askEl.querySelector("#rKind");
+    kindEl.value = kind;
+    const refresh = () => {
+      kind = kindEl.value;
+      askEl.querySelector("#rWeek").style.display = kind === "weekly" ? "" : "none";
+      askEl.querySelector("#rMonth").style.display = kind === "monthly" ? "" : "none";
+      askEl.querySelector("#rRange").style.display = kind === "none" ? "none" : "";
+    };
+    kindEl.onchange = refresh;
+    refresh();
+
+    askEl.querySelectorAll("[data-w]").forEach(el => {
+      const bit = 1 << Number(el.dataset.w);
+      if (mask & bit) el.classList.add("on");
+      el.onclick = () => {
+        mask ^= bit;
+        el.classList.toggle("on");
+      };
+    });
+    askEl.querySelector("#rClear").onclick = () => { askEl.querySelector("#rEnd").value = ""; };
+
+    askEl.querySelector("[data-cancel]").onclick = () => closeAsk(resolve, null);
+    askEl.querySelector("[data-ok]").onclick = () => closeAsk(resolve, {
+      recurrence: kind,
+      weekdayMask: kind === "weekly" ? mask : 0,
+      monthDay: kind === "monthly" ? Number(askEl.querySelector("#rDay").value) || 1 : 0,
+      startDate: kind === "none" ? (task.startDate || ymd(selected)) : askEl.querySelector("#rStart").value,
+      endDate: kind === "none" ? null : (askEl.querySelector("#rEnd").value || null)
+    });
+    askEl.oncancel = e => { e.preventDefault(); closeAsk(resolve, null); };
+    askEl.showModal();
+  });
+}
+
 /* ---------- 고치기 ---------- */
 const now = () => Date.now();
 const newID = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2)).toLowerCase();
@@ -470,10 +635,12 @@ async function moreActions(instanceId) {
   if (!task) return;
   const choice = await askChoice(task.title, [
     { key: "rename", label: "이름 바꾸기" },
+    { key: "repeat", label: `반복 설정 (지금: ${recurrenceText(task) || "반복 없음"})` },
     { key: "day", label: "이 날에서만 지우기", danger: true },
     { key: "all", label: "할 일 통째로 지우기", danger: true }
   ]);
   if (choice === "rename") renameTask(instance.taskId, task.title);
+  else if (choice === "repeat") setRecurrence(instance.taskId, task);
   else if (choice === "day") removeInstance(instanceId, task.title);
   else if (choice === "all") removeTask(instance.taskId, task.title);
 }
@@ -483,6 +650,20 @@ async function renameTask(taskId, current) {
   if (!title || title === current) return;
   await write({ [`tasks/${taskId}/title`]: title, [`tasks/${taskId}/updatedAt`]: now() },
               "이름을 바꾸지 못했습니다");
+}
+
+async function setRecurrence(taskId, task) {
+  const value = await askRecurrence(task);
+  if (!value) return;
+  await write({
+    [`tasks/${taskId}/recurrence`]: value.recurrence,
+    [`tasks/${taskId}/weekdayMask`]: value.weekdayMask,
+    [`tasks/${taskId}/monthDay`]: value.monthDay,
+    [`tasks/${taskId}/startDate`]: value.startDate,
+    [`tasks/${taskId}/endDate`]: value.endDate,
+    [`tasks/${taskId}/updatedAt`]: now()
+  }, "반복을 저장하지 못했습니다");
+  toast("반복을 저장했습니다.\n날짜별 항목은 앱을 열 때 만들어집니다.");
 }
 
 async function removeInstance(instanceId, title) {
