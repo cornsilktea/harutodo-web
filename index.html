@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>하루 할일</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✅</text></svg>">
+<style>
+  :root {
+    --bg: #f2f2f7;
+    --card: #ffffff;
+    --text: #1c1c1e;
+    --muted: #8e8e93;
+    --line: #e5e5ea;
+    --accent: #4c8df6;
+    --radius: 14px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#000; --card:#1c1c1e; --text:#f2f2f7; --muted:#98989e; --line:#2c2c2e; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 12px 14px 80px; }
+  header { display: flex; align-items: center; gap: 10px; padding: 8px 2px 14px; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 700; }
+  header .spacer { flex: 1; }
+  button { font: inherit; color: inherit; }
+  .btn {
+    border: 0; background: var(--card); color: var(--text);
+    padding: 8px 14px; border-radius: 999px; cursor: pointer;
+    box-shadow: 0 1px 2px rgba(0,0,0,.08);
+  }
+  .btn.primary { background: var(--accent); color: #fff; }
+  .btn:disabled { opacity: .5; cursor: default; }
+
+  .card { background: var(--card); border-radius: var(--radius); padding: 14px; }
+  .muted { color: var(--muted); }
+  .small { font-size: 13px; }
+  .tiny { font-size: 11px; }
+
+  /* 달력 */
+  .cal { background: var(--card); border-radius: var(--radius); padding: 10px 10px 6px; margin-bottom: 18px; }
+  .cal-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .cal-head strong { font-size: 15px; }
+  .cal-head button { border: 0; background: transparent; cursor: pointer; padding: 4px 8px; border-radius: 8px; color: var(--muted); }
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+  .cal-grid .wd { text-align: center; font-size: 11px; font-weight: 700; color: var(--muted); padding-bottom: 2px; }
+  .cal-grid .wd.sun { color: #e2564a; } .cal-grid .wd.sat { color: #4c8df6; }
+  .day {
+    border: 0; background: transparent; cursor: pointer; padding: 4px 0 6px;
+    display: flex; flex-direction: column; align-items: center; gap: 3px; border-radius: 10px;
+  }
+  .day .n {
+    width: 30px; height: 30px; line-height: 30px; text-align: center;
+    border-radius: 50%; font-size: 14px;
+  }
+  .day.other .n { opacity: .32; }
+  .day.today .n { box-shadow: inset 0 0 0 1.5px var(--accent); color: var(--accent); font-weight: 700; }
+  .day.sel .n { background: var(--accent); color: #fff; font-weight: 700; box-shadow: none; }
+  .dots { display: flex; gap: 2px; height: 6px; }
+  .dots i { width: 5px; height: 5px; border-radius: 50%; display: block; }
+
+  /* 목록 */
+  .cat-head { display: flex; align-items: center; gap: 8px; margin: 18px 2px 8px; }
+  .cat-head .name { font-size: 14px; font-weight: 600; color: var(--muted); }
+  .cat-head .sp { flex: 1; }
+  .badge { font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 999px; background: var(--line); color: var(--muted); }
+  .row {
+    background: var(--card); border-radius: var(--radius); padding: 11px 14px; margin-bottom: 6px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .check {
+    width: 26px; height: 26px; border-radius: 50%; flex: none; cursor: pointer;
+    border: 2px solid var(--accent); background: transparent; position: relative;
+  }
+  .check.done::after {
+    content: ""; position: absolute; inset: -2px; border-radius: 50%; background: var(--accent);
+  }
+  .check.done::before {
+    content: "✓"; position: absolute; inset: 0; color: #fff; font-size: 14px; font-weight: 800;
+    display: flex; align-items: center; justify-content: center; z-index: 1;
+  }
+  .row .body { min-width: 0; flex: 1; }
+  .row .title { }
+  .row.done .title { text-decoration: line-through; color: var(--muted); }
+  .row .meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .empty { background: var(--card); border-radius: var(--radius); padding: 14px; color: var(--muted); font-size: 13px; }
+
+  .notice { background: var(--card); border-radius: var(--radius); padding: 18px; line-height: 1.7; }
+  .notice code { background: var(--line); padding: 1px 5px; border-radius: 5px; font-size: 12px; }
+  .uid { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>하루 할일</h1>
+    <span class="spacer"></span>
+    <span id="who" class="small muted"></span>
+    <button id="auth" class="btn">로그인</button>
+  </header>
+  <div id="app"></div>
+</div>
+
+<script src="firebase-config.js"></script>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+import { getDatabase, ref, onValue }
+  from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
+
+const appEl = document.getElementById("app");
+const authBtn = document.getElementById("auth");
+const whoEl = document.getElementById("who");
+
+const cfg = window.HARU_FIREBASE || {};
+if (!cfg.apiKey || cfg.apiKey.startsWith("여기에")) {
+  appEl.innerHTML = `<div class="notice">
+    <b>설정이 아직 비어 있습니다.</b><br>
+    Firebase 콘솔 → 프로젝트 설정 → 내 앱 → 웹 앱에서 나오는 값을
+    <code>firebase-config.js</code> 에 채워 넣으면 이 화면이 동작합니다.
+  </div>`;
+  authBtn.disabled = true;
+  throw new Error("firebase config not set");
+}
+
+const fb = initializeApp(cfg);
+const auth = getAuth(fb);
+const db = getDatabase(fb);
+
+let state = { categories: {}, tasks: {}, instances: {} };
+let selected = startOfToday();
+let month = new Date(selected.getFullYear(), selected.getMonth(), 1);
+
+authBtn.addEventListener("click", () => {
+  if (auth.currentUser) signOut(auth);
+  else signInWithPopup(auth, new GoogleAuthProvider()).catch(e => alert("로그인 실패: " + e.message));
+});
+
+onAuthStateChanged(auth, user => {
+  if (!user) {
+    whoEl.textContent = "";
+    authBtn.textContent = "로그인";
+    appEl.innerHTML = `<div class="notice">구글 계정으로 로그인하면 아이폰 앱에 기록한 내용이 보입니다.</div>`;
+    return;
+  }
+  whoEl.textContent = user.displayName || user.email || "";
+  authBtn.textContent = "로그아웃";
+  subscribe(user.uid);
+});
+
+function subscribe(uid) {
+  appEl.innerHTML = `<div class="notice">불러오는 중…</div>`;
+  onValue(ref(db, `users/${uid}`), snap => {
+    const value = snap.val();
+    if (!value) {
+      appEl.innerHTML = `<div class="notice">
+        <b>아직 올라온 자료가 없습니다.</b><br>
+        아이폰 앱 → 설정에서 동기화를 켜고 앱을 한 번 열어 주세요.<br><br>
+        내 UID: <span class="uid">${uid}</span><br>
+        <span class="small muted">이 값을 firebase-config.js 의 HARU_OWNER_UID 와 데이터베이스 규칙에 넣습니다.</span>
+      </div>`;
+      return;
+    }
+    state = {
+      categories: value.categories || {},
+      tasks: value.tasks || {},
+      instances: value.instances || {}
+    };
+    render();
+  }, err => {
+    appEl.innerHTML = `<div class="notice"><b>읽지 못했습니다.</b><br>${err.message}<br><br>
+      데이터베이스 규칙에 이 UID 를 넣었는지 확인해 주세요.<br>
+      <span class="uid">${uid}</span></div>`;
+  });
+}
+
+/* ---------- 자료 정리 ---------- */
+const alive = obj => Object.entries(obj || {}).filter(([, v]) => v && !v.deletedAt);
+
+function instancesOn(dateKey) {
+  return alive(state.instances)
+    .filter(([, v]) => v.date === dateKey)
+    .map(([id, v]) => ({ id, ...v, task: state.tasks[v.taskId] }))
+    .filter(x => x.task && !x.task.deletedAt && !x.task.isArchived);
+}
+
+function doneColorsByDate() {
+  const map = {};
+  for (const [, v] of alive(state.instances)) {
+    if (!v.isDone) continue;
+    const task = state.tasks[v.taskId];
+    const cat = task && state.categories[task.categoryId];
+    const color = (cat && cat.colorHex) || "#4c8df6";
+    const list = map[v.date] || (map[v.date] = []);
+    if (!list.includes(color)) list.push(color);
+  }
+  return map;
+}
+
+function activeCategoriesOn(dateKey) {
+  return alive(state.categories)
+    .map(([id, v]) => ({ id, ...v }))
+    .filter(c => !c.endDate || c.endDate >= dateKey)
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+}
+
+/* ---------- 화면 ---------- */
+function render() {
+  const dots = doneColorsByDate();
+  appEl.innerHTML = calendarHTML(dots) + listHTML();
+  bind();
+}
+
+function calendarHTML(dots) {
+  const first = new Date(month.getFullYear(), month.getMonth(), 1);
+  const pad = first.getDay();
+  const start = new Date(first); start.setDate(1 - pad);
+  const total = Math.ceil((pad + daysInMonth(month)) / 7) * 7;
+  const wd = ["일","월","화","수","목","금","토"];
+  let cells = "";
+  for (let i = 0; i < total; i++) {
+    const d = new Date(start); d.setDate(start.getDate() + i);
+    const key = ymd(d);
+    const cls = [
+      "day",
+      d.getMonth() !== month.getMonth() ? "other" : "",
+      sameDay(d, new Date()) ? "today" : "",
+      key === ymd(selected) ? "sel" : ""
+    ].join(" ");
+    const colors = (dots[key] || []).slice(0, 3)
+      .map(c => `<i style="background:${c}"></i>`).join("");
+    cells += `<button class="${cls}" data-date="${key}">
+        <span class="n">${d.getDate()}</span><span class="dots">${colors}</span></button>`;
+  }
+  return `<div class="cal">
+    <div class="cal-head">
+      <strong>${month.getFullYear()}년 ${month.getMonth() + 1}월</strong>
+      <span style="flex:1"></span>
+      <button data-move="-1">‹</button>
+      <button data-move="today">오늘</button>
+      <button data-move="1">›</button>
+    </div>
+    <div class="cal-grid">${wd.map((w,i) =>
+      `<div class="wd ${i===0?'sun':''} ${i===6?'sat':''}">${w}</div>`).join("")}</div>
+    <div class="cal-grid">${cells}</div>
+  </div>`;
+}
+
+function listHTML() {
+  const key = ymd(selected);
+  const rows = instancesOn(key);
+  const cats = activeCategoriesOn(key);
+  if (!cats.length) return `<div class="empty">카테고리가 없습니다.</div>`;
+  return cats.map(cat => {
+    const mine = rows
+      .filter(r => r.task.categoryId === cat.id)
+      .sort((a, b) => (a.isDone - b.isDone) || ((a.task.sortOrder ?? 0) - (b.task.sortOrder ?? 0)));
+    const done = mine.filter(r => r.isDone).length;
+    const body = mine.length
+      ? mine.map(r => `<div class="row ${r.isDone ? "done" : ""}">
+          <span class="check ${r.isDone ? "done" : ""}" style="border-color:${cat.colorHex}${r.isDone ? `;background:${cat.colorHex}` : ""}"></span>
+          <span class="body">
+            <div class="title">${escapeHTML(r.task.title)}</div>
+            <div class="meta">${[recurrenceText(r.task), r.photoCount ? `사진 ${r.photoCount}장` : ""]
+              .filter(Boolean).join(" · ")}</div>
+          </span>
+        </div>`).join("")
+      : `<div class="empty">할 일이 없습니다</div>`;
+    return `<div class="cat-head">
+        <span class="name" style="color:${cat.colorHex}">${escapeHTML(cat.name)}</span>
+        <span class="sp"></span>
+        <span class="badge">완료 ${done}</span>
+        <span class="badge">남은 ${mine.length - done}</span>
+      </div>${body}`;
+  }).join("");
+}
+
+function bind() {
+  appEl.querySelectorAll("[data-date]").forEach(el => el.addEventListener("click", () => {
+    selected = parseYMD(el.dataset.date);
+    month = new Date(selected.getFullYear(), selected.getMonth(), 1);
+    render();
+  }));
+  appEl.querySelectorAll("[data-move]").forEach(el => el.addEventListener("click", () => {
+    const v = el.dataset.move;
+    if (v === "today") { selected = startOfToday(); month = new Date(selected.getFullYear(), selected.getMonth(), 1); }
+    else month = new Date(month.getFullYear(), month.getMonth() + Number(v), 1);
+    render();
+  }));
+}
+
+/* ---------- 잡일 ---------- */
+function startOfToday() { const d = new Date(); d.setHours(0,0,0,0); return d; }
+function daysInMonth(d) { return new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate(); }
+function sameDay(a, b) { return ymd(a) === ymd(b); }
+function ymd(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+function parseYMD(s) { const [y,m,d] = s.split("-").map(Number); return new Date(y, m-1, d); }
+function escapeHTML(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c =>
+    ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+}
+const WD = ["일","월","화","수","목","금","토"];
+function recurrenceText(task) {
+  switch (task.recurrence) {
+    case "daily": return "매일";
+    case "weekly": {
+      const days = WD.filter((_, i) => (task.weekdayMask ?? 0) & (1 << i));
+      return days.length ? "매주 " + days.join("·") : "요일 미지정";
+    }
+    case "monthly": return task.monthDay ? `매월 ${task.monthDay}일` : "일자 미지정";
+    default: return "";
+  }
+}
+</script>
+</body>
+</html>

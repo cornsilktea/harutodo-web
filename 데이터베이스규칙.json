@@ -1,0 +1,19 @@
+{
+  "rules": {
+    "users": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid",
+        "instances": {
+          ".indexOn": ["date", "updatedAt"]
+        },
+        "tasks": {
+          ".indexOn": ["categoryId", "updatedAt"]
+        },
+        "categories": {
+          ".indexOn": ["sortOrder", "updatedAt"]
+        }
+      }
+    }
+  }
+}
