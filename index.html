@@ -55,6 +55,11 @@
     border: 0; background: transparent; cursor: pointer; padding: 4px 0 6px;
     display: flex; flex-direction: column; align-items: center; gap: 3px; border-radius: 10px;
   }
+  .fold {
+    display: block; margin: 2px auto 0; border: 0; background: transparent; cursor: pointer;
+    color: var(--muted); font-size: 12px; line-height: 1; padding: 5px 18px; border-radius: 999px;
+  }
+  .fold:hover { background: var(--line); color: var(--text); }
   .day .n {
     width: 30px; height: 30px; line-height: 30px; text-align: center;
     border-radius: 50%; font-size: 14px;
@@ -192,6 +197,8 @@ const db = getDatabase(fb);
 
 let state = { categories: {}, tasks: {}, instances: {} };
 let uid = null;
+// 달력을 한 달로 펼칠지, 한 주로 접을지. 고른 값을 기억해 둔다.
+let calExpanded = localStorage.getItem("calExpanded") !== "0";
 let selected = startOfToday();
 let month = new Date(selected.getFullYear(), selected.getMonth(), 1);
 
@@ -328,18 +335,25 @@ function askMonth() {
 }
 
 function calendarHTML(dots) {
-  const first = new Date(month.getFullYear(), month.getMonth(), 1);
-  const pad = first.getDay();
-  const start = new Date(first); start.setDate(1 - pad);
-  const total = Math.ceil((pad + daysInMonth(month)) / 7) * 7;
   const wd = ["일","월","화","수","목","금","토"];
+  let start, total;
+  if (calExpanded) {
+    const first = new Date(month.getFullYear(), month.getMonth(), 1);
+    const pad = first.getDay();
+    start = new Date(first); start.setDate(1 - pad);
+    total = Math.ceil((pad + daysInMonth(month)) / 7) * 7;
+  } else {
+    // 접으면 고른 날짜가 든 한 주만 보여준다.
+    start = new Date(selected); start.setDate(selected.getDate() - selected.getDay());
+    total = 7;
+  }
   let cells = "";
   for (let i = 0; i < total; i++) {
     const d = new Date(start); d.setDate(start.getDate() + i);
     const key = ymd(d);
     const cls = [
       "day",
-      d.getMonth() !== month.getMonth() ? "other" : "",
+      calExpanded && d.getMonth() !== month.getMonth() ? "other" : "",
       sameDay(d, new Date()) ? "today" : "",
       key === ymd(selected) ? "sel" : ""
     ].join(" ");
@@ -361,6 +375,9 @@ function calendarHTML(dots) {
     <div class="cal-grid">${wd.map((w,i) =>
       `<div class="wd ${i===0?'sun':''} ${i===6?'sat':''}">${w}</div>`).join("")}</div>
     <div class="cal-grid">${cells}</div>
+    <button class="fold" data-fold title="${calExpanded ? "한 주만 보기" : "한 달 보기"}">
+      ${calExpanded ? "⌃" : "⌄"}
+    </button>
   </div>`;
 }
 
@@ -435,10 +452,27 @@ function bind() {
   });
   appEl.querySelectorAll("[data-move]").forEach(el => el.addEventListener("click", () => {
     const v = el.dataset.move;
-    if (v === "today") { selected = startOfToday(); month = new Date(selected.getFullYear(), selected.getMonth(), 1); }
-    else month = new Date(month.getFullYear(), month.getMonth() + Number(v), 1);
+    if (v === "today") {
+      selected = startOfToday();
+    } else if (calExpanded) {
+      month = new Date(month.getFullYear(), month.getMonth() + Number(v), 1);
+      render();
+      return;
+    } else {
+      // 접힌 상태에서는 주 단위로 움직인다.
+      selected = new Date(selected);
+      selected.setDate(selected.getDate() + Number(v) * 7);
+    }
+    month = new Date(selected.getFullYear(), selected.getMonth(), 1);
     render();
   }));
+  const foldBtn = appEl.querySelector("[data-fold]");
+  if (foldBtn) foldBtn.addEventListener("click", () => {
+    calExpanded = !calExpanded;
+    localStorage.setItem("calExpanded", calExpanded ? "1" : "0");
+    month = new Date(selected.getFullYear(), selected.getMonth(), 1);
+    render();
+  });
 }
 
 /* ---------- 끌어서 옮기기 ---------- */
