@@ -100,6 +100,32 @@
   .notice { background: var(--card); border-radius: var(--radius); padding: 18px; line-height: 1.7; }
   .notice code { background: var(--line); padding: 1px 5px; border-radius: 5px; font-size: 12px; }
   .uid { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+
+  /* 페이지 안에서 직접 그리는 창. 브라우저 기본 prompt 는 내장 브라우저에서 막히는 경우가 있다. */
+  dialog#ask {
+    border: 0; border-radius: 16px; padding: 0; width: min(360px, calc(100vw - 40px));
+    background: var(--card); color: var(--text); box-shadow: 0 20px 60px rgba(0,0,0,.3);
+  }
+  dialog#ask::backdrop { background: rgba(0,0,0,.4); }
+  #ask .head { padding: 18px 18px 6px; font-weight: 700; }
+  #ask .msg { padding: 0 18px 12px; font-size: 13px; color: var(--muted); white-space: pre-line; }
+  #ask .content { padding: 6px 18px 14px; display: flex; flex-direction: column; gap: 8px; }
+  #ask input {
+    font: inherit; color: inherit; width: 100%; padding: 10px 12px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--bg);
+  }
+  #ask .opt {
+    text-align: left; border: 0; background: var(--bg); border-radius: 10px;
+    padding: 12px 14px; cursor: pointer; font: inherit; color: inherit;
+  }
+  #ask .opt:hover { background: var(--line); }
+  #ask .opt.danger { color: #e2564a; }
+  #ask .foot { display: flex; gap: 8px; justify-content: flex-end; padding: 0 14px 14px; }
+  #ask .foot button {
+    border: 0; border-radius: 999px; padding: 9px 16px; cursor: pointer;
+    background: var(--bg); color: var(--text); font: inherit;
+  }
+  #ask .foot button.primary { background: var(--accent); color: #fff; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -112,6 +138,7 @@
   </header>
   <div id="app"></div>
 </div>
+<dialog id="ask"></dialog>
 
 <script src="firebase-config.js"></script>
 <script type="module">
@@ -147,7 +174,7 @@ let month = new Date(selected.getFullYear(), selected.getMonth(), 1);
 
 authBtn.addEventListener("click", () => {
   if (auth.currentUser) signOut(auth);
-  else signInWithPopup(auth, new GoogleAuthProvider()).catch(e => alert("로그인 실패: " + e.message));
+  else signInWithPopup(auth, new GoogleAuthProvider()).catch(e => toast("로그인 실패: " + e.message));
 });
 
 onAuthStateChanged(auth, user => {
@@ -306,7 +333,7 @@ function bind() {
         updatedAt: Date.now()
       });
     } catch (e) {
-      alert("바꾸지 못했습니다: " + e.message);
+      toast("바꾸지 못했습니다: " + e.message);
       el.style.opacity = 1;
     }
   }));
@@ -327,6 +354,79 @@ function bind() {
   }));
 }
 
+/* ---------- 페이지 안 대화상자 ---------- */
+const askEl = document.getElementById("ask");
+
+function closeAsk(resolve, value) {
+  askEl.close();
+  askEl.innerHTML = "";
+  resolve(value);
+}
+
+/// 글자를 입력받는 창. 취소하면 null.
+function askText(title, value = "", placeholder = "") {
+  return new Promise(resolve => {
+    askEl.innerHTML = `
+      <div class="head">${escapeHTML(title)}</div>
+      <div class="content"><input id="askInput" placeholder="${escapeHTML(placeholder)}"></div>
+      <div class="foot">
+        <button data-cancel>취소</button>
+        <button class="primary" data-ok>확인</button>
+      </div>`;
+    const input = askEl.querySelector("#askInput");
+    input.value = value;
+    askEl.querySelector("[data-cancel]").onclick = () => closeAsk(resolve, null);
+    askEl.querySelector("[data-ok]").onclick = () => closeAsk(resolve, input.value.trim());
+    input.onkeydown = e => {
+      if (e.key === "Enter") { e.preventDefault(); closeAsk(resolve, input.value.trim()); }
+      if (e.key === "Escape") { e.preventDefault(); closeAsk(resolve, null); }
+    };
+    askEl.oncancel = e => { e.preventDefault(); closeAsk(resolve, null); };
+    askEl.showModal();
+    setTimeout(() => { input.focus(); input.select(); }, 30);
+  });
+}
+
+/// 버튼 몇 개 중 하나를 고르는 창. 취소하면 null.
+function askChoice(title, options) {
+  return new Promise(resolve => {
+    askEl.innerHTML = `
+      <div class="head">${escapeHTML(title)}</div>
+      <div class="content">${options.map((o, i) =>
+        `<button class="opt ${o.danger ? "danger" : ""}" data-i="${i}">${escapeHTML(o.label)}</button>`).join("")}</div>
+      <div class="foot"><button data-cancel>취소</button></div>`;
+    askEl.querySelectorAll("[data-i]").forEach(el =>
+      el.onclick = () => closeAsk(resolve, options[Number(el.dataset.i)].key));
+    askEl.querySelector("[data-cancel]").onclick = () => closeAsk(resolve, null);
+    askEl.oncancel = e => { e.preventDefault(); closeAsk(resolve, null); };
+    askEl.showModal();
+  });
+}
+
+/// 예/아니오 창.
+function askConfirm(title, message, okLabel = "확인") {
+  return new Promise(resolve => {
+    askEl.innerHTML = `
+      <div class="head">${escapeHTML(title)}</div>
+      <div class="msg">${escapeHTML(message)}</div>
+      <div class="foot">
+        <button data-cancel>취소</button>
+        <button class="primary" data-ok>${escapeHTML(okLabel)}</button>
+      </div>`;
+    askEl.querySelector("[data-cancel]").onclick = () => closeAsk(resolve, false);
+    askEl.querySelector("[data-ok]").onclick = () => closeAsk(resolve, true);
+    askEl.oncancel = e => { e.preventDefault(); closeAsk(resolve, false); };
+    askEl.showModal();
+  });
+}
+
+function toast(text) {
+  askEl.innerHTML = `<div class="head">알림</div><div class="msg">${escapeHTML(text)}</div>
+    <div class="foot"><button class="primary" data-ok>확인</button></div>`;
+  askEl.querySelector("[data-ok]").onclick = () => { askEl.close(); askEl.innerHTML = ""; };
+  askEl.showModal();
+}
+
 /* ---------- 고치기 ---------- */
 const now = () => Date.now();
 const newID = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2)).toLowerCase();
@@ -336,12 +436,13 @@ async function write(paths, failMessage) {
   try {
     await update(ref(db, `users/${uid}`), paths);
   } catch (e) {
-    alert(`${failMessage}: ${e.message}`);
+    toast(`${failMessage}: ${e.message}`);
   }
 }
 
 async function addTask(categoryId) {
-  const title = (prompt("새 할 일") || "").trim();
+  const category = state.categories[categoryId];
+  const title = await askText(`${(category && category.name) || "카테고리"} 에 추가`, "", "할 일 입력");
   if (!title) return;
   const dateKey = ymd(selected);
   const taskId = newID();
@@ -363,34 +464,39 @@ async function addTask(categoryId) {
   }, "추가하지 못했습니다");
 }
 
-function moreActions(instanceId) {
+async function moreActions(instanceId) {
   const instance = state.instances[instanceId];
   const task = instance && state.tasks[instance.taskId];
   if (!task) return;
-  const choice = prompt(
-    `‘${task.title}’\n\n1 = 이름 바꾸기\n2 = 이 날에서만 지우기\n3 = 할 일 통째로 지우기\n\n번호를 입력하세요`,
-    "1"
-  );
-  if (choice === "1") renameTask(instance.taskId, task.title);
-  else if (choice === "2") removeInstance(instanceId, task.title);
-  else if (choice === "3") removeTask(instance.taskId, task.title);
+  const choice = await askChoice(task.title, [
+    { key: "rename", label: "이름 바꾸기" },
+    { key: "day", label: "이 날에서만 지우기", danger: true },
+    { key: "all", label: "할 일 통째로 지우기", danger: true }
+  ]);
+  if (choice === "rename") renameTask(instance.taskId, task.title);
+  else if (choice === "day") removeInstance(instanceId, task.title);
+  else if (choice === "all") removeTask(instance.taskId, task.title);
 }
 
 async function renameTask(taskId, current) {
-  const title = (prompt("새 이름", current) || "").trim();
+  const title = await askText("이름 바꾸기", current, "새 이름");
   if (!title || title === current) return;
   await write({ [`tasks/${taskId}/title`]: title, [`tasks/${taskId}/updatedAt`]: now() },
               "이름을 바꾸지 못했습니다");
 }
 
 async function removeInstance(instanceId, title) {
-  if (!confirm(`‘${title}’ 을(를) 이 날짜에서 지울까요?\n다른 날의 기록은 남습니다.`)) return;
+  const ok = await askConfirm("이 날에서만 지우기",
+    `‘${title}’ 을(를) 이 날짜에서 지웁니다.\n다른 날의 기록은 그대로 남습니다.`, "지우기");
+  if (!ok) return;
   await write({ [`instances/${instanceId}/deletedAt`]: now(),
                 [`instances/${instanceId}/updatedAt`]: now() }, "지우지 못했습니다");
 }
 
 async function removeTask(taskId, title) {
-  if (!confirm(`‘${title}’ 을(를) 지난 기록까지 모두 지울까요?\n되돌릴 수 없습니다.`)) return;
+  const ok = await askConfirm("통째로 지우기",
+    `‘${title}’ 을(를) 지난 기록까지 모두 지웁니다.\n되돌릴 수 없습니다.`, "모두 지우기");
+  if (!ok) return;
   const stamp = now();
   const paths = { [`tasks/${taskId}/deletedAt`]: stamp, [`tasks/${taskId}/updatedAt`]: stamp };
   for (const [id, value] of alive(state.instances)) {
