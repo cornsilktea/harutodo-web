@@ -819,7 +819,16 @@ function escapeHTML(s) {
     ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
 }
 const WD = ["일","월","화","수","목","금","토"];
+
+/// 반복 규칙과 기간을 앱과 같은 문구로. 예) "매주 월·수 · 12월 20일까지"
 function recurrenceText(task) {
+  const rule = recurrenceRule(task);
+  const period = periodText(task);
+  if (!rule) return "";
+  return period ? `${rule} · ${period}` : rule;
+}
+
+function recurrenceRule(task) {
   switch (task.recurrence) {
     case "daily": return "매일";
     case "weekly": {
@@ -829,6 +838,22 @@ function recurrenceText(task) {
     case "monthly": return task.monthDay ? `매월 ${task.monthDay}일` : "일자 미지정";
     default: return "";
   }
+}
+
+/// 시작일이 아직 오지 않았거나 종료일이 있으면 기간을 알려준다.
+function periodText(task) {
+  if (!task.recurrence || task.recurrence === "none") return "";
+  const today = ymd(new Date());
+  const startsLater = task.startDate && task.startDate > today;
+  if (startsLater && task.endDate) return `${shortDay(task.startDate)}~${shortDay(task.endDate)}`;
+  if (startsLater) return `${shortDay(task.startDate)}부터`;
+  if (task.endDate) return `${shortDay(task.endDate)}까지`;
+  return "";
+}
+
+function shortDay(key) {
+  const [, m, d] = key.split("-").map(Number);
+  return `${m}월 ${d}일`;
 }
 </script>
 </body>
