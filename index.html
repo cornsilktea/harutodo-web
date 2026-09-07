@@ -90,6 +90,12 @@
   .row.done .title { text-decoration: line-through; color: var(--muted); }
   .row .meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
   .empty { background: var(--card); border-radius: var(--radius); padding: 14px; color: var(--muted); font-size: 13px; }
+  .icon-btn {
+    border: 0; background: transparent; color: var(--muted); cursor: pointer;
+    font-size: 17px; line-height: 1; padding: 4px 6px; border-radius: 8px;
+  }
+  .icon-btn:hover { background: var(--line); color: var(--text); }
+  .icon-btn.add { color: var(--accent); font-size: 20px; font-weight: 700; }
 
   .notice { background: var(--card); border-radius: var(--radius); padding: 18px; line-height: 1.7; }
   .notice code { background: var(--line); padding: 1px 5px; border-radius: 5px; font-size: 12px; }
@@ -274,6 +280,7 @@ function listHTML() {
             <div class="meta">${[recurrenceText(r.task), r.photoCount ? `사진 ${r.photoCount}장` : ""]
               .filter(Boolean).join(" · ")}</div>
           </span>
+          <button class="icon-btn" data-more="${r.id}" title="이름 바꾸기 · 삭제">⋯</button>
         </div>`).join("")
       : `<div class="empty">할 일이 없습니다</div>`;
     return `<div class="cat-head">
@@ -281,6 +288,7 @@ function listHTML() {
         <span class="sp"></span>
         <span class="badge">완료 ${done}</span>
         <span class="badge">남은 ${mine.length - done}</span>
+        <button class="icon-btn add" data-add="${cat.id}" title="할 일 추가">+</button>
       </div>${body}`;
   }).join("");
 }
@@ -302,6 +310,10 @@ function bind() {
       el.style.opacity = 1;
     }
   }));
+  appEl.querySelectorAll("[data-add]").forEach(el =>
+    el.addEventListener("click", () => addTask(el.dataset.add)));
+  appEl.querySelectorAll("[data-more]").forEach(el =>
+    el.addEventListener("click", () => moreActions(el.dataset.more)));
   appEl.querySelectorAll("[data-date]").forEach(el => el.addEventListener("click", () => {
     selected = parseYMD(el.dataset.date);
     month = new Date(selected.getFullYear(), selected.getMonth(), 1);
@@ -313,6 +325,81 @@ function bind() {
     else month = new Date(month.getFullYear(), month.getMonth() + Number(v), 1);
     render();
   }));
+}
+
+/* ---------- 고치기 ---------- */
+const now = () => Date.now();
+const newID = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2)).toLowerCase();
+
+async function write(paths, failMessage) {
+  if (!uid) return;
+  try {
+    await update(ref(db, `users/${uid}`), paths);
+  } catch (e) {
+    alert(`${failMessage}: ${e.message}`);
+  }
+}
+
+async function addTask(categoryId) {
+  const title = (prompt("새 할 일") || "").trim();
+  if (!title) return;
+  const dateKey = ymd(selected);
+  const taskId = newID();
+  const instanceId = newID();
+  const sameCategory = alive(state.tasks).filter(([, t]) => t.categoryId === categoryId);
+  const order = sameCategory.reduce((max, [, t]) => Math.max(max, (t.sortOrder ?? 0) + 1), 0);
+  await write({
+    [`tasks/${taskId}`]: {
+      title, note: "", categoryId,
+      recurrence: "none", weekdayMask: 0, monthDay: 0,
+      startDate: dateKey, endDate: null,
+      sortOrder: order, isArchived: false,
+      updatedAt: now(), deletedAt: null
+    },
+    [`instances/${instanceId}`]: {
+      taskId, date: dateKey, isDone: false, photoCount: 0,
+      updatedAt: now(), deletedAt: null
+    }
+  }, "추가하지 못했습니다");
+}
+
+function moreActions(instanceId) {
+  const instance = state.instances[instanceId];
+  const task = instance && state.tasks[instance.taskId];
+  if (!task) return;
+  const choice = prompt(
+    `‘${task.title}’\n\n1 = 이름 바꾸기\n2 = 이 날에서만 지우기\n3 = 할 일 통째로 지우기\n\n번호를 입력하세요`,
+    "1"
+  );
+  if (choice === "1") renameTask(instance.taskId, task.title);
+  else if (choice === "2") removeInstance(instanceId, task.title);
+  else if (choice === "3") removeTask(instance.taskId, task.title);
+}
+
+async function renameTask(taskId, current) {
+  const title = (prompt("새 이름", current) || "").trim();
+  if (!title || title === current) return;
+  await write({ [`tasks/${taskId}/title`]: title, [`tasks/${taskId}/updatedAt`]: now() },
+              "이름을 바꾸지 못했습니다");
+}
+
+async function removeInstance(instanceId, title) {
+  if (!confirm(`‘${title}’ 을(를) 이 날짜에서 지울까요?\n다른 날의 기록은 남습니다.`)) return;
+  await write({ [`instances/${instanceId}/deletedAt`]: now(),
+                [`instances/${instanceId}/updatedAt`]: now() }, "지우지 못했습니다");
+}
+
+async function removeTask(taskId, title) {
+  if (!confirm(`‘${title}’ 을(를) 지난 기록까지 모두 지울까요?\n되돌릴 수 없습니다.`)) return;
+  const stamp = now();
+  const paths = { [`tasks/${taskId}/deletedAt`]: stamp, [`tasks/${taskId}/updatedAt`]: stamp };
+  for (const [id, value] of alive(state.instances)) {
+    if (value.taskId === taskId) {
+      paths[`instances/${id}/deletedAt`] = stamp;
+      paths[`instances/${id}/updatedAt`] = stamp;
+    }
+  }
+  await write(paths, "지우지 못했습니다");
 }
 
 /* ---------- 잡일 ---------- */
