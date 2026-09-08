@@ -277,7 +277,13 @@ function subscribe(uid) {
       tasks: value.tasks || {},
       instances: value.instances || {}
     };
-    render();
+    try {
+      render();
+    } catch (e) {
+      appEl.innerHTML = `<div class="notice"><b>화면을 그리지 못했습니다.</b><br>
+        ${escapeHTML(e.message)}</div>`;
+      console.error(e);
+    }
   }, err => {
     appEl.innerHTML = `<div class="notice"><b>읽지 못했습니다.</b><br>${err.message}<br><br>
       데이터베이스 규칙에 이 UID 를 넣었는지 확인해 주세요.<br>
@@ -382,6 +388,7 @@ function calendarHTML(dots) {
   for (let i = 0; i < total; i++) {
     const d = new Date(start); d.setDate(start.getDate() + i);
     const key = ymd(d);
+    const entry = dots[key];
     const cls = [
       "day",
       calExpanded && d.getMonth() !== month.getMonth() ? "other" : "",
@@ -390,7 +397,6 @@ function calendarHTML(dots) {
       sameDay(d, new Date()) ? "today" : "",
       key === ymd(selected) ? "sel" : ""
     ].join(" ");
-    const entry = dots[key];
     const colors = ((entry && entry.colors) || []).slice(0, 3)
       .map(c => `<i style="background:${c}"></i>`).join("");
     cells += `<button class="${cls}" data-date="${key}">
