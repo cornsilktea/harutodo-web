@@ -887,16 +887,85 @@ async function moreActions(instanceId) {
   const instance = state.instances[instanceId];
   const task = instance && state.tasks[instance.taskId];
   if (!task) return;
-  const choice = await askChoice(task.title, [
+  const todayKey = ymd(new Date());
+  const options = [
     { key: "rename", label: "이름 바꾸기" },
-    { key: "repeat", label: `반복 설정 (지금: ${recurrenceText(task) || "반복 없음"})` },
-    { key: "day", label: "이 날에서만 지우기", danger: true },
-    { key: "all", label: "할 일 통째로 지우기", danger: true }
-  ]);
+    { key: "repeat", label: `반복 설정 (지금: ${recurrenceText(task) || "반복 없음"})` }
+  ];
+  if (instance.date !== todayKey) options.push({ key: "today", label: "오늘로 가져오기" });
+  options.push({ key: "tomorrow", label: "내일로 미루기" });
+  options.push({ key: "pick", label: "다른 날짜로 옮기기" });
+  options.push({ key: "day", label: "이 날에서만 지우기", danger: true });
+  options.push({ key: "all", label: "할 일 통째로 지우기", danger: true });
+
+  const choice = await askChoice(task.title, options);
   if (choice === "rename") renameTask(instance.taskId, task.title);
   else if (choice === "repeat") setRecurrence(instance.taskId, task);
+  else if (choice === "today") moveInstance(instanceId, todayKey);
+  else if (choice === "tomorrow") moveInstance(instanceId, shiftKey(instance.date, 1));
+  else if (choice === "pick") pickAndMove(instanceId, instance.date);
   else if (choice === "day") removeInstance(instanceId, task.title);
   else if (choice === "all") removeTask(instance.taskId, task.title);
+}
+
+/// "YYYY-MM-DD" 에서 며칠 뒤(앞)의 날짜 문자열.
+function shiftKey(dateKey, days) {
+  const d = parseYMD(dateKey);
+  d.setDate(d.getDate() + days);
+  return ymd(d);
+}
+
+async function pickAndMove(instanceId, currentKey) {
+  const target = await askDate("날짜 옮기기", currentKey);
+  if (target) moveInstance(instanceId, target);
+}
+
+/// 이 날의 할 일 하나를 다른 날짜로 옮긴다. 앱의 "날짜 옮기기" 와 같다.
+async function moveInstance(instanceId, targetKey) {
+  const instance = state.instances[instanceId];
+  if (!instance || instance.date === targetKey) return;
+  const task = state.tasks[instance.taskId];
+  if (!task) return;
+
+  // 옮길 날에 같은 할 일이 이미 있으면 겹쳐 쓰지 않는다.
+  const clash = alive(state.instances).some(([id, v]) =>
+    id !== instanceId && v.taskId === instance.taskId && v.date === targetKey);
+  if (clash) {
+    toast(`${shortDay(targetKey)}에는 ‘${task.title}’ 이(가) 이미 있습니다.`);
+    return;
+  }
+
+  const stamp = now();
+  const paths = {
+    [`instances/${instanceId}/date`]: targetKey,
+    [`instances/${instanceId}/updatedAt`]: stamp
+  };
+  // 반복하지 않는 할 일은 시작일이 곧 등장일이라 함께 옮겨준다.
+  if (!task.recurrence || task.recurrence === "none") {
+    paths[`tasks/${instance.taskId}/startDate`] = targetKey;
+    paths[`tasks/${instance.taskId}/updatedAt`] = stamp;
+  }
+  await write(paths, "옮기지 못했습니다");
+  toast(`${shortDay(targetKey)}로 옮겼습니다.`);
+}
+
+/// 달력에서 날짜 하나를 고르는 창.
+function askDate(title, currentKey) {
+  return new Promise(resolve => {
+    askEl.innerHTML = `
+      <div class="head">${escapeHTML(title)}</div>
+      <div class="content"><input id="askDay" type="date" value="${currentKey}"></div>
+      <div class="foot">
+        <button data-cancel>취소</button>
+        <button class="primary" data-ok>옮기기</button>
+      </div>`;
+    const input = askEl.querySelector("#askDay");
+    askEl.querySelector("[data-cancel]").onclick = () => closeAsk(resolve, null);
+    askEl.querySelector("[data-ok]").onclick = () => closeAsk(resolve, input.value || null);
+    askEl.oncancel = e => { e.preventDefault(); closeAsk(resolve, null); };
+    askEl.showModal();
+    input.focus();
+  });
 }
 
 async function renameTask(taskId, current) {
