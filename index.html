@@ -88,6 +88,7 @@
     border-radius: 50%; font-size: 14px;
   }
   .day.other .n { opacity: .32; }
+  .day.alldone .n { box-shadow: inset 0 0 0 2px var(--text); }
   .day.today .n { box-shadow: inset 0 0 0 1.5px var(--accent); color: var(--accent); font-weight: 700; }
   .day.sel .n { background: var(--accent); color: #fff; font-weight: 700; box-shadow: none; }
   .dots { display: flex; gap: 2px; height: 6px; }
@@ -294,15 +295,21 @@ function instancesOn(dateKey) {
     .filter(x => x.task && !x.task.deletedAt && !x.task.isArchived);
 }
 
-function doneColorsByDate() {
+/// 날짜별 { done, total, colors }. 모두 끝낸 날을 가려내는 데도 쓴다.
+function summaryByDate() {
   const map = {};
   for (const [, v] of alive(state.instances)) {
-    if (!v.isDone) continue;
     const task = state.tasks[v.taskId];
-    const cat = task && state.categories[task.categoryId];
-    const color = (cat && cat.colorHex) || "#4c8df6";
-    const list = map[v.date] || (map[v.date] = []);
-    if (!list.includes(color)) list.push(color);
+    if (!task || task.deletedAt || task.isArchived) continue;
+    const cat = state.categories[task.categoryId];
+    if (cat && cat.endDate && cat.endDate < v.date) continue;
+    const entry = map[v.date] || (map[v.date] = { done: 0, total: 0, colors: [] });
+    entry.total += 1;
+    if (v.isDone) {
+      entry.done += 1;
+      const color = (cat && cat.colorHex) || "#4c8df6";
+      if (!entry.colors.includes(color)) entry.colors.push(color);
+    }
   }
   return map;
 }
@@ -316,7 +323,7 @@ function activeCategoriesOn(dateKey) {
 
 /* ---------- 화면 ---------- */
 function render() {
-  const dots = doneColorsByDate();
+  const dots = summaryByDate();
   dateTitleEl.textContent = boardTitle(selected);
   appEl.innerHTML = `<div class="cal-col">${calendarHTML(dots)}</div>`
                   + `<div class="list-col">${listHTML()}</div>`;
@@ -378,10 +385,13 @@ function calendarHTML(dots) {
     const cls = [
       "day",
       calExpanded && d.getMonth() !== month.getMonth() ? "other" : "",
+      // 그날 할 일을 모두 끝냈으면 테두리로 표시한다.
+      entry && entry.total > 0 && entry.done === entry.total ? "alldone" : "",
       sameDay(d, new Date()) ? "today" : "",
       key === ymd(selected) ? "sel" : ""
     ].join(" ");
-    const colors = (dots[key] || []).slice(0, 3)
+    const entry = dots[key];
+    const colors = ((entry && entry.colors) || []).slice(0, 3)
       .map(c => `<i style="background:${c}"></i>`).join("");
     cells += `<button class="${cls}" data-date="${key}">
         <span class="n">${d.getDate()}</span><span class="dots">${colors}</span></button>`;
