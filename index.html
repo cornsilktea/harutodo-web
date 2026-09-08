@@ -25,6 +25,19 @@
     -webkit-font-smoothing: antialiased;
   }
   .wrap { max-width: 720px; margin: 0 auto; padding: 12px 14px 80px; }
+
+  /* 화면이 넓으면 달력을 왼쪽에 붙여 두고 할 일을 오른쪽에 놓는다. */
+  @media (min-width: 900px) {
+    .wrap { max-width: 1080px; }
+    #app {
+      display: grid; grid-template-columns: 340px minmax(0, 1fr);
+      gap: 22px; align-items: start;
+    }
+    .cal-col { position: sticky; top: 12px; }
+    .cal { margin-bottom: 0; }
+    .list-col > .cat-head:first-child { margin-top: 0; }
+    #app > .notice { grid-column: 1 / -1; }
+  }
   header { display: flex; align-items: center; gap: 10px; padding: 8px 2px 14px; }
   header #dateTitle { font-size: 17px; font-weight: 700; }
   .btn.icon-only { font-size: 17px; padding: 7px 12px; line-height: 1; }
@@ -295,7 +308,8 @@ function activeCategoriesOn(dateKey) {
 function render() {
   const dots = doneColorsByDate();
   dateTitleEl.textContent = boardTitle(selected);
-  appEl.innerHTML = calendarHTML(dots) + listHTML();
+  appEl.innerHTML = `<div class="cal-col">${calendarHTML(dots)}</div>`
+                  + `<div class="list-col">${listHTML()}</div>`;
   bind();
 }
 
