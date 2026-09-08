@@ -26,17 +26,27 @@
   }
   .wrap { max-width: 720px; margin: 0 auto; padding: 12px 14px 80px; }
 
-  /* 화면이 넓으면 달력을 왼쪽에 붙여 두고 할 일을 오른쪽에 놓는다. */
+  /* 화면이 넓으면 가운데를 기준으로 왼쪽은 달력, 오른쪽은 할 일. */
   @media (min-width: 900px) {
-    .wrap { max-width: 1080px; }
+    .wrap { max-width: 1500px; padding: 12px 24px 80px; }
     #app {
-      display: grid; grid-template-columns: 340px minmax(0, 1fr);
-      gap: 22px; align-items: start;
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 28px; align-items: start;
     }
     .cal-col { position: sticky; top: 12px; }
-    .cal { margin-bottom: 0; }
+    .cal { margin-bottom: 0; padding: 14px 14px 8px; }
     .list-col > .cat-head:first-child { margin-top: 0; }
     #app > .notice { grid-column: 1 / -1; }
+
+    /* 자리가 넓어진 만큼 달력도 키운다. */
+    .cal-grid { gap: 4px; }
+    .cal-grid .wd { font-size: 13px; padding-bottom: 4px; }
+    .day { padding: 6px 0 8px; gap: 5px; }
+    .day .n { width: 42px; height: 42px; line-height: 42px; font-size: 17px; border-radius: 50%; }
+    .dots { gap: 3px; height: 8px; }
+    .dots i { width: 7px; height: 7px; }
+    .cal-head strong { font-size: 17px; }
+    .fold { padding: 7px 26px; font-size: 14px; }
   }
   header { display: flex; align-items: center; gap: 10px; padding: 8px 2px 14px; }
   header #dateTitle { font-size: 17px; font-weight: 700; }
