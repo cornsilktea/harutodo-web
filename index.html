@@ -68,6 +68,15 @@
 
   /* 달력 */
   .cal { background: var(--card); border-radius: var(--radius); padding: 10px 10px 6px; margin-bottom: 18px; }
+  /* 그날의 급식 (나이스 학교급식 정보) */
+  .meal { background: var(--card); border-radius: var(--radius); padding: 12px 14px 14px; margin-bottom: 18px; }
+  .meal h4 { margin: 0 0 8px; font-size: 14px; display: flex; align-items: center; gap: 6px; }
+  .meal h4 .muted { font-weight: 400; font-size: 12px; }
+  .meal .kind { font-size: 12px; font-weight: 700; color: var(--accent); margin: 10px 0 4px; }
+  .meal .kind:first-of-type { margin-top: 0; }
+  .meal ul { margin: 0; padding-left: 18px; }
+  .meal li { line-height: 1.55; }
+  .meal .cal-kcal { margin-top: 8px; font-size: 12px; }
   .cal-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
   .cal-head strong { font-size: 15px; }
   .cal-head button { border: 0; background: transparent; cursor: pointer; padding: 4px 8px; border-radius: 8px; color: var(--muted); }
@@ -331,9 +340,10 @@ function activeCategoriesOn(dateKey) {
 function render() {
   const dots = summaryByDate();
   dateTitleEl.textContent = boardTitle(selected);
-  appEl.innerHTML = `<div class="cal-col">${calendarHTML(dots)}</div>`
+  appEl.innerHTML = `<div class="cal-col">${calendarHTML(dots)}${mealHTML()}</div>`
                   + `<div class="list-col">${listHTML()}</div>`;
   bind();
+  ensureMeals(selected);
 }
 
 /// 앱과 같은 표기: 오늘이면 "9월 7일 (월, 오늘)".
@@ -369,6 +379,59 @@ function askMonth() {
     askEl.oncancel = e => { e.preventDefault(); closeAsk(resolve, null); };
     askEl.showModal();
   });
+}
+
+/* ---------- 급식 (나이스 학교급식 식단 정보) ---------- */
+// 서울특별시교육청(B10) 동마중학교(7134129).
+// 인증키 없이 쓰면 여러 날을 한 번에 받을 수 없어 하루씩 받아 둔다.
+const MEAL_OFFICE = "B10";
+const MEAL_SCHOOL = "7134129";
+const mealCache = {};   // "YYYY-MM-DD" -> [{ kind, dishes, kcal }]
+const mealLoading = {}; // 같은 날을 두 번 부르지 않도록.
+
+/// 알레르기 번호와 표시 기호를 지운 음식 이름 목록.
+function mealDishes(text) {
+  return String(text || "").split("<br/>")
+    .map(x => x.replace(/[()（][0-9.,\s]*[)）]/g, "").replace(/[*+]/g, "").trim())
+    .filter(Boolean);
+}
+
+async function ensureMeals(day) {
+  const key = ymd(day);
+  if (mealCache[key] || mealLoading[key]) return;
+  mealLoading[key] = true;
+  const url = "https://open.neis.go.kr/hub/mealServiceDietInfo"
+    + `?Type=json&pIndex=1&pSize=10&ATPT_OFCDC_SC_CODE=${MEAL_OFFICE}`
+    + `&SD_SCHUL_CODE=${MEAL_SCHOOL}&MLSV_YMD=${key.replace(/-/g, "")}`;
+  let meals = [];
+  try {
+    const json = await (await fetch(url)).json();
+    for (const r of json?.mealServiceDietInfo?.[1]?.row || []) {
+      const dishes = mealDishes(r.DDISH_NM);
+      if (dishes.length) {
+        meals.push({ kind: r.MMEAL_SC_NM || "급식", dishes, kcal: String(r.CAL_INFO || "").trim() });
+      }
+    }
+  } catch (e) {
+    console.warn("급식을 불러오지 못했습니다.", e);
+    mealLoading[key] = false;
+    return; // 통신이 끊긴 경우라면 다음에 다시 받아 본다.
+  }
+  mealLoading[key] = false;
+  mealCache[key] = meals;
+  if (ymd(selected) === key) render();
+}
+
+function mealHTML() {
+  const head = `<h4>🍚 급식 <span class="muted">동마중학교</span></h4>`;
+  const meals = mealCache[ymd(selected)];
+  if (!meals) return `<div class="meal">${head}<div class="muted">불러오는 중…</div></div>`;
+  if (!meals.length) return `<div class="meal">${head}<div class="muted">이 날은 급식이 없습니다.</div></div>`;
+  const body = meals.map(m => `
+    <div class="kind">${escapeHTML(m.kind)}</div>
+    <ul>${m.dishes.map(x => `<li>${escapeHTML(x)}</li>`).join("")}</ul>
+    ${m.kcal ? `<div class="cal-kcal muted">${escapeHTML(m.kcal)}</div>` : ""}`).join("");
+  return `<div class="meal">${head}${body}</div>`;
 }
 
 function calendarHTML(dots) {
