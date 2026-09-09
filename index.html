@@ -500,7 +500,7 @@ function listHTML() {
           <span class="check ${r.isDone ? "done" : ""}" data-toggle="${r.id}" title="완료 표시"
                 style="--c:${cat.colorHex}"></span>
           <span class="body">
-            <div class="title">${escapeHTML(r.task.title)}</div>
+            <div class="title">${escapeHTML(r.titleOverride || r.task.title)}</div>
             <div class="meta">${[recurrenceText(r.task), r.photoCount ? `사진 ${r.photoCount}장` : ""]
               .filter(Boolean).join(" · ")}</div>
           </span>
@@ -888,10 +888,19 @@ async function moreActions(instanceId) {
   const task = instance && state.tasks[instance.taskId];
   if (!task) return;
   const todayKey = ymd(new Date());
-  const options = [
-    { key: "rename", label: "이름 바꾸기" },
-    { key: "repeat", label: `반복 설정 (지금: ${recurrenceText(task) || "반복 없음"})` }
-  ];
+  const repeats = task.recurrence && task.recurrence !== "none";
+  const options = [];
+  if (repeats) {
+    // 반복 할 일은 하루치 이름만 따로 바꿀 수 있어야 한다.
+    options.push({ key: "renameDay", label: "이 날만 이름 바꾸기" });
+    if (instance.titleOverride) {
+      options.push({ key: "resetDay", label: `원래 이름(${task.title})으로 되돌리기` });
+    }
+    options.push({ key: "rename", label: "이름 바꾸기 (모든 날)" });
+  } else {
+    options.push({ key: "rename", label: "이름 바꾸기" });
+  }
+  options.push({ key: "repeat", label: `반복 설정 (지금: ${recurrenceText(task) || "반복 없음"})` });
   if (instance.date !== todayKey) options.push({ key: "today", label: "오늘로 가져오기" });
   options.push({ key: "tomorrow", label: "내일로 미루기" });
   options.push({ key: "pick", label: "다른 날짜로 옮기기" });
@@ -900,6 +909,8 @@ async function moreActions(instanceId) {
 
   const choice = await askChoice(task.title, options);
   if (choice === "rename") renameTask(instance.taskId, task.title);
+  else if (choice === "renameDay") renameDay(instanceId, instance.titleOverride || task.title);
+  else if (choice === "resetDay") setDayTitle(instanceId, null);
   else if (choice === "repeat") setRecurrence(instance.taskId, task);
   else if (choice === "today") moveInstance(instanceId, todayKey);
   else if (choice === "tomorrow") moveInstance(instanceId, shiftKey(instance.date, 1));
@@ -966,6 +977,21 @@ function askDate(title, currentKey) {
     askEl.showModal();
     input.focus();
   });
+}
+
+/// 이 날짜의 이름만 바꾼다. 다른 날은 그대로 둔다.
+async function renameDay(instanceId, current) {
+  const title = await askText("이 날만 이름 바꾸기", current, "이 날짜에 쓸 이름");
+  if (!title || title === current) return;
+  const task = state.tasks[state.instances[instanceId]?.taskId];
+  await setDayTitle(instanceId, title === task?.title ? null : title);
+}
+
+async function setDayTitle(instanceId, title) {
+  await write({
+    [`instances/${instanceId}/titleOverride`]: title === null ? null : title,
+    [`instances/${instanceId}/updatedAt`]: now()
+  }, "이름을 바꾸지 못했습니다");
 }
 
 async function renameTask(taskId, current) {
