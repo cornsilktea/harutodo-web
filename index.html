@@ -172,6 +172,15 @@
     font: inherit; color: inherit; width: 100%; padding: 9px 11px; border-radius: 10px;
     border: 1px solid var(--line); background: var(--bg);
   }
+  #ask .list { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow-y: auto; }
+  #ask .bday { display: flex; align-items: center; gap: 8px; background: var(--bg);
+    border-radius: 10px; padding: 10px 12px; }
+  #ask .bday .who { flex: 1; min-width: 0; }
+  #ask .bday .who b { font-weight: 600; }
+  #ask .bday .who div { font-size: 12px; color: var(--muted); }
+  #ask .bday button { border: 0; background: transparent; cursor: pointer;
+    font: inherit; color: var(--muted); padding: 4px 6px; border-radius: 8px; }
+  #ask .bday button:hover { background: var(--line); color: var(--text); }
   #ask .chips { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
   #ask .chip {
     border: 0; border-radius: 8px; padding: 9px 0; cursor: pointer; font: inherit;
@@ -228,7 +237,7 @@ const fb = initializeApp(cfg);
 const auth = getAuth(fb);
 const db = getDatabase(fb);
 
-let state = { categories: {}, tasks: {}, instances: {} };
+let state = { categories: {}, tasks: {}, instances: {}, birthdays: {} };
 let uid = null;
 // 달력을 한 달로 펼칠지, 한 주로 접을지. 고른 값을 기억해 둔다.
 let calExpanded = localStorage.getItem("calExpanded") !== "0";
@@ -243,12 +252,15 @@ settingsBtn.addEventListener("click", async () => {
   const choice = await askChoice("설정", [
     { key: "who", label: `계정: ${user?.email || user?.displayName || "연결됨"}` },
     { key: "today", label: "오늘로 이동" },
+    { key: "birthdays", label: "생일" },
     { key: "out", label: "로그아웃", danger: true }
   ]);
   if (choice === "today") {
     selected = startOfToday();
     month = new Date(selected.getFullYear(), selected.getMonth(), 1);
     render();
+  } else if (choice === "birthdays") {
+    openBirthdays();
   } else if (choice === "out") {
     signOut(auth);
   }
@@ -284,7 +296,8 @@ function subscribe(uid) {
     state = {
       categories: value.categories || {},
       tasks: value.tasks || {},
-      instances: value.instances || {}
+      instances: value.instances || {},
+      birthdays: value.birthdays || {}
     };
     try {
       render();
@@ -1046,6 +1059,227 @@ function ymd(d) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 }
 function parseYMD(s) { const [y,m,d] = s.split("-").map(Number); return new Date(y, m-1, d); }
+/* ---------- 생일 ---------- */
+// 앱과 같은 규칙: 해마다 이 카테고리에 "<이름> 생일" 을 넣는다.
+const BIRTHDAY_CATEGORY = "기타일정";
+
+const lunarFormatter = new Intl.DateTimeFormat("en-u-ca-chinese",
+  { month: "numeric", day: "numeric", timeZone: "Asia/Seoul" });
+
+/// 음력 월·일이 그 해의 양력 며칠인지. 윤달(6bis 같은 표기)은 건너뛴다.
+function lunarToSolar(month, day, year) {
+  const cursor = new Date(year, 0, 1);
+  while (cursor.getFullYear() === year) {
+    const parts = {};
+    for (const p of lunarFormatter.formatToParts(new Date(
+      cursor.getFullYear(), cursor.getMonth(), cursor.getDate(), 12))) {
+      parts[p.type] = p.value;
+    }
+    if (!String(parts.month).includes("bis")
+        && Number(parts.month) === month && Number(parts.day) === day) {
+      return ymd(cursor);
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return null;
+}
+
+/// 적어 둔 생일이 그 해 양력으로 며칠인지. 없는 날이면 null.
+function birthdaySolar(birthday, year) {
+  if (!birthday.isLunar) {
+    const d = new Date(year, birthday.month - 1, birthday.day);
+    return d.getMonth() === birthday.month - 1 ? ymd(d) : null;
+  }
+  return lunarToSolar(birthday.month, birthday.day, year)
+      // 그 해에 30일이 없는 작은달이면 29일로 대신한다.
+      || (birthday.day === 30 ? lunarToSolar(birthday.month, 29, year) : null);
+}
+
+function birthdayText(b) { return `${b.isLunar ? "음력 " : ""}${b.month}월 ${b.day}일`; }
+
+function aliveBirthdays() {
+  return alive(state.birthdays)
+    .map(([id, v]) => ({ id, ...v }))
+    .sort((a, b) => (a.month - b.month) || (a.day - b.day));
+}
+
+/// 생일 목록 창. 닫을 때까지 열어 둔다.
+async function openBirthdays() {
+  while (true) {
+    const list = aliveBirthdays();
+    const year = new Date().getFullYear();
+    const rows = list.length
+      ? list.map(b => {
+          const solar = b.isLunar ? birthdaySolar(b, year) : null;
+          const extra = solar ? ` · 올해 ${shortDay(solar)}` : "";
+          return `<div class="bday">
+            <span class="who"><b>${escapeHTML(b.name)}</b>
+              <div>${birthdayText(b)}${extra}</div></span>
+            <button data-edit="${b.id}" title="고치기">✎</button>
+            <button data-del="${b.id}" title="지우기">🗑</button>
+          </div>`;
+        }).join("")
+      : `<div class="msg" style="padding:0">아직 등록한 생일이 없습니다.</div>`;
+
+    const action = await new Promise(resolve => {
+      askEl.innerHTML = `
+        <div class="head">생일</div>
+        <div class="content">
+          <button class="opt" data-add>＋ 생일 추가</button>
+          <div class="list">${rows}</div>
+        </div>
+        <div class="msg">해가 바뀌면 등록한 생일이 그 해 달력의 ‘${BIRTHDAY_CATEGORY}’ 에 들어갑니다.
+음력은 양력으로 바꿔서 넣습니다.</div>
+        <div class="foot"><button class="primary" data-ok>닫기</button></div>`;
+      askEl.querySelector("[data-add]").onclick = () => closeAsk(resolve, { kind: "add" });
+      askEl.querySelectorAll("[data-edit]").forEach(el =>
+        el.onclick = () => closeAsk(resolve, { kind: "edit", id: el.dataset.edit }));
+      askEl.querySelectorAll("[data-del]").forEach(el =>
+        el.onclick = () => closeAsk(resolve, { kind: "del", id: el.dataset.del }));
+      askEl.querySelector("[data-ok]").onclick = () => closeAsk(resolve, null);
+      askEl.oncancel = e => { e.preventDefault(); closeAsk(resolve, null); };
+      askEl.showModal();
+    });
+    if (!action) return;
+
+    if (action.kind === "add") await editBirthday(null);
+    else if (action.kind === "edit") await editBirthday(action.id);
+    else if (action.kind === "del") await deleteBirthday(action.id);
+  }
+}
+
+/// 생일 하나를 적는 창. 월·일은 굴려서 고르고 음력·양력을 함께 정한다.
+async function editBirthday(id) {
+  const current = id ? state.birthdays[id] : null;
+  const value = await askBirthdayForm(current);
+  if (!value) return;
+
+  const stamp = now();
+  const key = id || newID();
+  await write({ [`birthdays/${key}`]: { ...value, updatedAt: stamp, deletedAt: null } },
+              "저장하지 못했습니다");
+  await placeBirthday({ ...value }, new Date().getFullYear());
+}
+
+async function deleteBirthday(id) {
+  const birthday = state.birthdays[id];
+  if (!birthday) return;
+  const ok = await askConfirm("생일 지우기",
+    `‘${birthday.name}’ 을(를) 목록에서 지웁니다.\n이미 달력에 들어간 일정은 그대로 남습니다.`, "지우기");
+  if (!ok) return;
+  await write({ [`birthdays/${id}/deletedAt`]: now(), [`birthdays/${id}/updatedAt`]: now() },
+              "지우지 못했습니다");
+}
+
+/// 그 해 달력에 생일 일정을 넣는다. 이미 있으면 그냥 둔다.
+async function placeBirthday(birthday, year) {
+  const dateKey = birthdaySolar(birthday, year);
+  if (!dateKey) return;
+  const title = `${birthday.name} 생일`;
+
+  const already = alive(state.instances).some(([, v]) => {
+    const task = state.tasks[v.taskId];
+    return v.date === dateKey && task && !task.deletedAt && task.title === title;
+  });
+  if (already) return;
+
+  const paths = {};
+  let categoryId = (alive(state.categories)
+    .find(([, c]) => (c.name || "").trim() === BIRTHDAY_CATEGORY) || [])[0];
+  if (!categoryId) {
+    categoryId = newID();
+    const order = alive(state.categories)
+      .reduce((max, [, c]) => Math.max(max, (c.sortOrder ?? 0) + 1), 0);
+    paths[`categories/${categoryId}`] = {
+      name: BIRTHDAY_CATEGORY, colorHex: "#F2994A", symbolName: "calendar",
+      sortOrder: order, endDate: null, updatedAt: now(), deletedAt: null
+    };
+  }
+
+  const taskId = newID();
+  paths[`tasks/${taskId}`] = {
+    title, note: "", categoryId,
+    recurrence: "none", weekdayMask: 0, monthDay: 0,
+    startDate: dateKey, endDate: null,
+    sortOrder: 0, isArchived: false, updatedAt: now(), deletedAt: null
+  };
+  paths[`instances/${newID()}`] = {
+    taskId, date: dateKey, isDone: false, photoCount: 0,
+    updatedAt: now(), deletedAt: null
+  };
+  await write(paths, "달력에 넣지 못했습니다");
+  toast(`${shortDay(dateKey)}에 ‘${title}’ 을(를) 넣었습니다.`);
+}
+
+function askBirthdayForm(current) {
+  const months = Array.from({ length: 12 }, (_, i) => i + 1);
+  return new Promise(resolve => {
+    askEl.innerHTML = `
+      <div class="head">${current ? "생일 고치기" : "생일 추가"}</div>
+      <div class="content">
+        <input id="bName" placeholder="이름" value="${escapeHTML(current?.name || "")}">
+        <div class="chips" style="grid-template-columns:repeat(2,1fr)">
+          <button class="chip" data-cal="solar">양력</button>
+          <button class="chip" data-cal="lunar">음력</button>
+        </div>
+        <div class="row2" style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <select id="bMonth" size="6">${months
+            .map(m => `<option value="${m}">${m}월</option>`).join("")}</select>
+          <select id="bDay" size="6"></select>
+        </div>
+        <label id="bHint"></label>
+      </div>
+      <div class="foot">
+        <button data-cancel>취소</button>
+        <button class="primary" data-ok>저장</button>
+      </div>`;
+
+    let isLunar = !!current?.isLunar;
+    let month = current?.month || 1;
+    let day = current?.day || 1;
+    const monthEl = askEl.querySelector("#bMonth");
+    const dayEl = askEl.querySelector("#bDay");
+    const hintEl = askEl.querySelector("#bHint");
+    const solarLengths = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+    function paint() {
+      askEl.querySelectorAll("[data-cal]").forEach(el =>
+        el.classList.toggle("on", (el.dataset.cal === "lunar") === isLunar));
+      const count = isLunar ? 30 : solarLengths[month - 1];
+      if (day > count) day = count;
+      dayEl.innerHTML = Array.from({ length: count }, (_, i) => i + 1)
+        .map(d => `<option value="${d}">${d}일</option>`).join("");
+      monthEl.value = String(month);
+      dayEl.value = String(day);
+      if (isLunar) {
+        const year = new Date().getFullYear();
+        const solar = lunarToSolar(month, day, year)
+          || (day === 30 ? lunarToSolar(month, 29, year) : null);
+        hintEl.textContent = solar
+          ? `올해 양력으로는 ${shortDay(solar)}입니다.`
+          : "올해에는 이 날이 없습니다.";
+      } else {
+        hintEl.textContent = "";
+      }
+    }
+    askEl.querySelectorAll("[data-cal]").forEach(el =>
+      el.onclick = () => { isLunar = el.dataset.cal === "lunar"; paint(); });
+    monthEl.onchange = () => { month = Number(monthEl.value); paint(); };
+    dayEl.onchange = () => { day = Number(dayEl.value); paint(); };
+    paint();
+
+    askEl.querySelector("[data-cancel]").onclick = () => closeAsk(resolve, null);
+    askEl.querySelector("[data-ok]").onclick = () => {
+      const name = askEl.querySelector("#bName").value.trim();
+      if (!name) return;
+      closeAsk(resolve, { name, month, day, isLunar });
+    };
+    askEl.oncancel = e => { e.preventDefault(); closeAsk(resolve, null); };
+    askEl.showModal();
+    askEl.querySelector("#bName").focus();
+  });
+}
+
 function escapeHTML(s) {
   return String(s ?? "").replace(/[&<>"']/g, c =>
     ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));

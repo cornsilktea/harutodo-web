@@ -12,6 +12,9 @@
         },
         "categories": {
           ".indexOn": ["sortOrder", "updatedAt"]
+        },
+        "birthdays": {
+          ".indexOn": ["updatedAt"]
         }
       }
     }
