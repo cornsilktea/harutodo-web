@@ -4,24 +4,27 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>하루 할일</title>
+<meta name="theme-color" content="#24402f">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nanum+Gothic:wght@400;700;800&display=swap">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✅</text></svg>">
 <style>
   :root {
-    --bg: #f2f2f7;
-    --card: #ffffff;
-    --text: #1c1c1e;
-    --muted: #8e8e93;
-    --line: #e5e5ea;
-    --accent: #4c8df6;
+    color-scheme: dark;
+    --bg: #24402f;
+    --card: #315543;
+    --text: #f3f1e9;
+    --muted: #b7c8bd;
+    --line: #3f6a55;
+    --accent: #9fd8b2;
+    --on-accent: #24402f;
     --radius: 14px;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg:#000; --card:#1c1c1e; --text:#f2f2f7; --muted:#98989e; --line:#2c2c2e; }
   }
   * { box-sizing: border-box; }
   body {
     margin: 0; background: var(--bg); color: var(--text);
-    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    font: 15px/1.5 "Nanum Gothic", "NanumGothic", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
     -webkit-font-smoothing: antialiased;
   }
   .wrap { max-width: 720px; margin: 0 auto; padding: 12px 14px 80px; }
@@ -56,9 +59,9 @@
   .btn {
     border: 0; background: var(--card); color: var(--text);
     padding: 8px 14px; border-radius: 999px; cursor: pointer;
-    box-shadow: 0 1px 2px rgba(0,0,0,.08);
+    box-shadow: 0 1px 2px rgba(0,0,0,.18);
   }
-  .btn.primary { background: var(--accent); color: #fff; }
+  .btn.primary { background: var(--accent); color: var(--on-accent); }
   .btn:disabled { opacity: .5; cursor: default; }
 
   .card { background: var(--card); border-radius: var(--radius); padding: 14px; }
@@ -82,7 +85,7 @@
   .cal-head button { border: 0; background: transparent; cursor: pointer; padding: 4px 8px; border-radius: 8px; color: var(--muted); }
   .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
   .cal-grid .wd { text-align: center; font-size: 11px; font-weight: 700; color: var(--muted); padding-bottom: 2px; }
-  .cal-grid .wd.sun { color: #e2564a; } .cal-grid .wd.sat { color: #4c8df6; }
+  .cal-grid .wd.sun { color: #f08a80; } .cal-grid .wd.sat { color: #8fb8f0; }
   .day {
     border: 0; background: transparent; cursor: pointer; padding: 4px 0 6px;
     display: flex; flex-direction: column; align-items: center; gap: 3px; border-radius: 10px;
@@ -99,7 +102,7 @@
   .day.other .n { opacity: .32; }
   .day.alldone .n { box-shadow: inset 0 0 0 2px var(--text); }
   .day.today .n { box-shadow: inset 0 0 0 1.5px var(--accent); color: var(--accent); font-weight: 700; }
-  .day.sel .n { background: var(--accent); color: #fff; font-weight: 700; box-shadow: none; }
+  .day.sel .n { background: var(--accent); color: var(--on-accent); font-weight: 700; box-shadow: none; }
   .dots { display: flex; gap: 2px; height: 6px; }
   .dots i { width: 5px; height: 5px; border-radius: 50%; display: block; }
 
@@ -160,13 +163,13 @@
     padding: 12px 14px; cursor: pointer; font: inherit; color: inherit;
   }
   #ask .opt:hover { background: var(--line); }
-  #ask .opt.danger { color: #e2564a; }
+  #ask .opt.danger { color: #f08a80; }
   #ask .foot { display: flex; gap: 8px; justify-content: flex-end; padding: 0 14px 14px; }
   #ask .foot button {
     border: 0; border-radius: 999px; padding: 9px 16px; cursor: pointer;
     background: var(--bg); color: var(--text); font: inherit;
   }
-  #ask .foot button.primary { background: var(--accent); color: #fff; font-weight: 600; }
+  #ask .foot button.primary { background: var(--accent); color: var(--on-accent); font-weight: 600; }
   #ask label { font-size: 13px; color: var(--muted); }
   #ask select, #ask input[type=date], #ask input[type=number] {
     font: inherit; color: inherit; width: 100%; padding: 9px 11px; border-radius: 10px;
@@ -186,7 +189,7 @@
     border: 0; border-radius: 8px; padding: 9px 0; cursor: pointer; font: inherit;
     background: var(--bg); color: var(--text);
   }
-  #ask .chip.on { background: var(--accent); color: #fff; font-weight: 700; }
+  #ask .chip.on { background: var(--accent); color: var(--on-accent); font-weight: 700; }
   #ask .row2 { display: flex; gap: 8px; align-items: center; }
 
   .row.dragging { opacity: .4; }
