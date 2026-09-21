@@ -102,7 +102,10 @@
   .day.other .n { opacity: .32; }
   .day.alldone .n { box-shadow: inset 0 0 0 2px var(--text); }
   .day.today .n { box-shadow: inset 0 0 0 1.5px var(--accent); color: var(--accent); font-weight: 700; }
+  /* 일요일·공휴일은 빨강, 토요일은 하늘색. 고른 날은 배경색이 있으니 글자색을 되돌린다. */
+  .day.red .n { color: #f08a80; } .day.sat .n { color: #8fb8f0; }
   .day.sel .n { background: var(--accent); color: var(--on-accent); font-weight: 700; box-shadow: none; }
+  header #dateTitle.red { color: #f08a80; } header #dateTitle.sat { color: #8fb8f0; }
   .dots { display: flex; gap: 2px; height: 6px; }
   .dots i { width: 5px; height: 5px; border-radius: 50%; display: block; }
 
@@ -194,6 +197,7 @@
 
   .row.dragging { opacity: .4; }
   .row.drop-before { box-shadow: inset 0 3px 0 var(--dropc, var(--accent)); }
+  .row.drop-after { box-shadow: inset 0 -3px 0 var(--dropc, var(--accent)); }
   .cat-head.drop-target {
     background: color-mix(in srgb, var(--dropc, var(--accent)) 20%, transparent);
     border-radius: 8px;
@@ -213,6 +217,7 @@
 <dialog id="ask"></dialog>
 
 <script src="firebase-config.js"></script>
+<script src="holidays.js"></script>
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
@@ -356,6 +361,8 @@ function activeCategoriesOn(dateKey) {
 function render() {
   const dots = summaryByDate();
   dateTitleEl.textContent = boardTitle(selected);
+  dateTitleEl.classList.toggle("red", KoreanHolidays.isRedDay(selected));
+  dateTitleEl.classList.toggle("sat", !KoreanHolidays.isRedDay(selected) && KoreanHolidays.isSaturday(selected));
   appEl.innerHTML = `<div class="cal-col">${calendarHTML(dots)}${mealHTML()}</div>`
                   + `<div class="list-col">${listHTML()}</div>`;
   bind();
@@ -365,7 +372,9 @@ function render() {
 /// 앱과 같은 표기: 오늘이면 "9월 7일 (월, 오늘)".
 function boardTitle(d) {
   const WD = ["일","월","화","수","목","금","토"];
-  const base = `${d.getMonth() + 1}월 ${d.getDate()}일 (${WD[d.getDay()]}`;
+  let base = `${d.getMonth() + 1}월 ${d.getDate()}일 (${WD[d.getDay()]}`;
+  const holiday = KoreanHolidays.name(d);
+  if (holiday) base += `, ${holiday}`;
   return sameDay(d, new Date()) ? `${base}, 오늘)` : `${base})`;
 }
 
@@ -474,11 +483,13 @@ function calendarHTML(dots) {
       // 그날 할 일을 모두 끝냈으면 테두리로 표시한다.
       entry && entry.total > 0 && entry.done === entry.total ? "alldone" : "",
       sameDay(d, new Date()) ? "today" : "",
+      KoreanHolidays.isRedDay(d) ? "red" : (KoreanHolidays.isSaturday(d) ? "sat" : ""),
       key === ymd(selected) ? "sel" : ""
     ].join(" ");
+    const holiday = KoreanHolidays.name(d);
     const colors = ((entry && entry.colors) || []).slice(0, 3)
       .map(c => `<i style="background:${c}"></i>`).join("");
-    cells += `<button class="${cls}" data-date="${key}">
+    cells += `<button class="${cls}" data-date="${key}"${holiday ? ` title="${escapeHTML(holiday)}"` : ""}>
         <span class="n">${d.getDate()}</span><span class="dots">${colors}</span></button>`;
   }
   return `<div class="cal">
@@ -607,8 +618,8 @@ function bindDragAndDrop() {
     });
     row.addEventListener("dragend", () => {
       dragging = null;
-      appEl.querySelectorAll(".dragging, .drop-before, .drop-target")
-        .forEach(el => el.classList.remove("dragging", "drop-before", "drop-target"));
+      appEl.querySelectorAll(".dragging, .drop-before, .drop-after, .drop-target")
+        .forEach(el => el.classList.remove("dragging", "drop-before", "drop-after", "drop-target"));
     });
     row.addEventListener("dragover", e => {
       if (!dragging || row.dataset.task === dragging) return;
@@ -617,14 +628,17 @@ function bindDragAndDrop() {
       const target = state.tasks[row.dataset.task];
       const color = target && state.categories[target.categoryId]?.colorHex;
       if (color) row.style.setProperty("--dropc", color);
-      row.classList.add("drop-before");
+      // 줄의 아래 절반에 놓으면 그 줄 뒤에 들어간다. 이게 없으면 맨 끝으로 옮길 수 없다.
+      const after = isLowerHalf(row, e);
+      row.classList.toggle("drop-before", !after);
+      row.classList.toggle("drop-after", after);
     });
-    row.addEventListener("dragleave", () => row.classList.remove("drop-before"));
+    row.addEventListener("dragleave", () => row.classList.remove("drop-before", "drop-after"));
     row.addEventListener("drop", e => {
       e.preventDefault();
-      row.classList.remove("drop-before");
+      row.classList.remove("drop-before", "drop-after");
       const target = state.tasks[row.dataset.task];
-      if (dragging && target) moveTask(dragging, target.categoryId, row.dataset.task);
+      if (dragging && target) moveTask(dragging, target.categoryId, row.dataset.task, isLowerHalf(row, e));
     });
   });
 
@@ -645,9 +659,15 @@ function bindDragAndDrop() {
   });
 }
 
+/// 포인터가 줄의 아래쪽 절반에 있는지.
+function isLowerHalf(row, e) {
+  const box = row.getBoundingClientRect();
+  return e.clientY > box.top + box.height / 2;
+}
+
 /// 끌어다 놓은 결과를 순서값에 반영한다.
 /// 그날 보이는 항목들끼리만 번호를 다시 매겨, 안 보이는 지난 할 일의 순서는 건드리지 않는다.
-async function moveTask(taskId, targetCategoryId, beforeTaskId) {
+async function moveTask(taskId, targetCategoryId, targetTaskId, after = false) {
   const moved = state.tasks[taskId];
   if (!moved) return;
   const dateKey = ymd(selected);
@@ -658,8 +678,9 @@ async function moveTask(taskId, targetCategoryId, beforeTaskId) {
     .filter(r => r.taskId !== taskId)
     .sort((a, b) => (a.task.sortOrder ?? 0) - (b.task.sortOrder ?? 0))
     .map(r => r.taskId);
-  const at = beforeTaskId ? order.indexOf(beforeTaskId) : -1;
-  if (at >= 0) order.splice(at, 0, taskId); else order.push(taskId);
+  // 놓은 줄의 앞 또는 뒤에 끼워 넣는다. 놓을 줄이 없으면(카테고리 머리글) 맨 뒤에 붙인다.
+  const at = targetTaskId ? order.indexOf(targetTaskId) : -1;
+  if (at >= 0) order.splice(after ? at + 1 : at, 0, taskId); else order.push(taskId);
 
   const base = slots.length ? Math.min(...slots) : 0;
   const paths = {};
@@ -917,8 +938,9 @@ async function moreActions(instanceId) {
     options.push({ key: "rename", label: "이름 바꾸기" });
   }
   options.push({ key: "repeat", label: `반복 설정 (지금: ${recurrenceText(task) || "반복 없음"})` });
-  if (instance.date !== todayKey) options.push({ key: "today", label: "오늘로 가져오기" });
-  options.push({ key: "tomorrow", label: "내일로 미루기" });
+  // 보고 있는 날짜 기준으로 뜻이 있는 것만: 오늘 → 내일로 미루기, 과거·미래 → 오늘로 가져오기.
+  if (instance.date === todayKey) options.push({ key: "tomorrow", label: "내일로 미루기" });
+  else options.push({ key: "today", label: "오늘로 가져오기" });
   options.push({ key: "pick", label: "다른 날짜로 옮기기" });
   options.push({ key: "day", label: "이 날에서만 지우기", danger: true });
   options.push({ key: "all", label: "할 일 통째로 지우기", danger: true });
