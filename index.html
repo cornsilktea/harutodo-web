@@ -137,6 +137,13 @@
   .row.done .title { text-decoration: line-through; color: var(--muted); }
   .row .meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
   .empty { background: var(--card); border-radius: var(--radius); padding: 14px; color: var(--muted); font-size: 13px; }
+  .move-all {
+    display: block; width: 100%; margin: 4px 0 6px; padding: 10px; border: 0; cursor: pointer;
+    border-radius: 12px; font: inherit; font-weight: 700; color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+  .move-all:hover { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+  .row { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
   .icon-btn {
     border: 0; background: transparent; color: var(--muted); cursor: pointer;
     font-size: 17px; line-height: 1; padding: 4px 6px; border-radius: 8px;
@@ -516,7 +523,12 @@ function listHTML() {
   const rows = instancesOn(key);
   const cats = activeCategoriesOn(key);
   if (!cats.length) return `<div class="empty">카테고리가 없습니다.</div>`;
-  return cats.map(cat => {
+  // 지난 날짜를 볼 때, 못 끝낸 일 중 오늘 목록에 같은 이름이 없는 것을 한꺼번에 옮기는 단추.
+  const movable = movableToToday(key);
+  const moveAll = movable.length
+    ? `<button class="move-all" data-move-all>⤵ 모든 할 일 오늘로 옮기기 (${movable.length})</button>`
+    : "";
+  return moveAll + cats.map(cat => {
     const mine = rows
       .filter(r => r.task.categoryId === cat.id)
       .sort((a, b) => (a.isDone - b.isDone) || ((a.task.sortOrder ?? 0) - (b.task.sortOrder ?? 0)));
@@ -544,7 +556,63 @@ function listHTML() {
   }).join("");
 }
 
+/// 지난 날짜에서 못 끝낸 일 중, 오늘 목록에 같은 이름이 없는 것.
+function movableToToday(dateKey) {
+  const todayKey = ymd(new Date());
+  if (dateKey >= todayKey) return [];
+  const titleOf = r => r.titleOverride || r.task.title;
+  const todayTitles = new Set(instancesOn(todayKey).map(titleOf));
+  return instancesOn(dateKey).filter(r => !r.isDone && !todayTitles.has(titleOf(r)));
+}
+
+/// 지난 날짜의 못 끝낸 일을 오늘로 한꺼번에 옮긴다.
+async function moveAllToToday(dateKey) {
+  const rows = movableToToday(dateKey);
+  if (!rows.length) return;
+  const todayKey = ymd(new Date());
+  const stamp = now();
+  const paths = {};
+  for (const r of rows) {
+    paths[`instances/${r.id}/date`] = todayKey;
+    paths[`instances/${r.id}/updatedAt`] = stamp;
+    // 반복하지 않는 할 일은 시작일이 곧 등장일이라 함께 옮겨준다.
+    if (!r.task.recurrence || r.task.recurrence === "none") {
+      paths[`tasks/${r.taskId}/startDate`] = todayKey;
+      paths[`tasks/${r.taskId}/updatedAt`] = stamp;
+    }
+  }
+  await write(paths, "옮기지 못했습니다");
+  toast(`${rows.length}개를 오늘로 옮겼습니다.`);
+}
+
+/// 줄을 1초 이상 누르면(마우스·터치 모두) 그날 이름만 바로 고친다. 앱과 같은 동작.
+function bindLongPress(row) {
+  let timer = null;
+  let startX = 0, startY = 0;
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  row.addEventListener("pointerdown", e => {
+    if (e.button !== 0 || e.target.closest("button, .check")) return;
+    startX = e.clientX; startY = e.clientY;
+    cancel();
+    timer = setTimeout(() => {
+      timer = null;
+      const instance = state.instances[row.dataset.row];
+      const task = instance && state.tasks[instance.taskId];
+      if (task) renameDay(row.dataset.row, instance.titleOverride || task.title);
+    }, 1000);
+  });
+  row.addEventListener("pointermove", e => {
+    if (timer && Math.hypot(e.clientX - startX, e.clientY - startY) > 10) cancel();
+  });
+  ["pointerup", "pointercancel", "pointerleave", "dragstart"].forEach(t => row.addEventListener(t, cancel));
+  // 터치에서 길게 누르면 뜨는 브라우저 메뉴는 막는다(줄 메뉴는 ⋯ 단추로 연다).
+  row.addEventListener("contextmenu", e => e.preventDefault());
+}
+
 function bind() {
+  const moveAllBtn = appEl.querySelector("[data-move-all]");
+  if (moveAllBtn) moveAllBtn.addEventListener("click", () => moveAllToToday(ymd(selected)));
+  appEl.querySelectorAll(".row[data-row]").forEach(bindLongPress);
   appEl.querySelectorAll("[data-toggle]").forEach(el => el.addEventListener("click", async () => {
     const id = el.dataset.toggle;
     const current = state.instances[id];
