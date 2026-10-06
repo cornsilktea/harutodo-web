@@ -331,11 +331,25 @@ function subscribe(uid) {
 /* ---------- 자료 정리 ---------- */
 const alive = obj => Object.entries(obj || {}).filter(([, v]) => v && !v.deletedAt);
 
+const isRepeatingTask = task => !!task.recurrence && task.recurrence !== "none";
+
+/// 공휴일에는 '수업 준비' 카테고리의 반복 일정을 만들지도, 보여주지도 않는다.
+/// 카테고리 이름은 앱과 같이 띄어쓰기를 무시하고 비교한다.
+const CLASS_PREP_CATEGORY = "수업준비";
+function skippedOnHoliday(task, dateKey) {
+  if (!isRepeatingTask(task)) return false;
+  const cat = state.categories[task.categoryId];
+  if (!cat || String(cat.name || "").replace(/\s/g, "") !== CLASS_PREP_CATEGORY) return false;
+  return KoreanHolidays.isHoliday(parseYMD(dateKey));
+}
+
 function instancesOn(dateKey) {
   return alive(state.instances)
     .filter(([, v]) => v.date === dateKey)
     .map(([id, v]) => ({ id, ...v, task: state.tasks[v.taskId] }))
-    .filter(x => x.task && !x.task.deletedAt && !x.task.isArchived);
+    .filter(x => x.task && !x.task.deletedAt && !x.task.isArchived)
+    // 이미 끝낸 기록은 공휴일이어도 남긴다.
+    .filter(x => x.isDone || !skippedOnHoliday(x.task, dateKey));
 }
 
 /// 날짜별 { done, total, colors }. 모두 끝낸 날을 가려내는 데도 쓴다.
@@ -346,6 +360,7 @@ function summaryByDate() {
     if (!task || task.deletedAt || task.isArchived) continue;
     const cat = state.categories[task.categoryId];
     if (cat && cat.endDate && cat.endDate < v.date) continue;
+    if (!v.isDone && skippedOnHoliday(task, v.date)) continue;
     const entry = map[v.date] || (map[v.date] = { done: 0, total: 0, colors: [] });
     entry.total += 1;
     if (v.isDone) {
@@ -531,7 +546,10 @@ function listHTML() {
   return moveAll + cats.map(cat => {
     const mine = rows
       .filter(r => r.task.categoryId === cat.id)
-      .sort((a, b) => (a.isDone - b.isDone) || ((a.task.sortOrder ?? 0) - (b.task.sortOrder ?? 0)));
+      // 반복 일정은 완료 여부와 상관없이 카테고리 맨 아래에 모은다.
+      .sort((a, b) => (isRepeatingTask(a.task) - isRepeatingTask(b.task))
+        || (a.isDone - b.isDone)
+        || ((a.task.sortOrder ?? 0) - (b.task.sortOrder ?? 0)));
     const done = mine.filter(r => r.isDone).length;
     const body = mine.length
       ? mine.map(r => `<div class="row ${r.isDone ? "done" : ""}" draggable="true"
@@ -938,6 +956,40 @@ function occursOn(task, date) {
   }
 }
 
+/// 반복 할 일의 앞날 기록을 만들 경로들. 앱의 materializeForward 와 같은 범위를 쓴다
+/// (종료일이 있으면 그날까지, 없으면 다음 두 달 말일까지). 이걸 하지 않으면
+/// 웹에서 만든 반복이 앱을 열기 전까지 그 날짜 하나에만 보인다.
+/// 지운 기록(deletedAt)도 "있는 것"으로 쳐서 되살리지 않는다.
+function forwardInstancePaths(taskId, task, extraDateKeys = []) {
+  const paths = {};
+  const have = new Set(Object.values(state.instances || {})
+    .filter(v => v && v.taskId === taskId).map(v => v.date));
+  const cat = state.categories[task.categoryId];
+  const stamp = now();
+  const add = key => {
+    if (have.has(key) || !occursOn(task, parseYMD(key))) return;
+    if (cat && cat.endDate && cat.endDate < key) return;
+    if (skippedOnHoliday(task, key)) return;
+    have.add(key);
+    paths[`instances/${newID()}`] = { taskId, date: key, isDone: false, photoCount: 0,
+                                     updatedAt: stamp, deletedAt: null };
+  };
+  extraDateKeys.forEach(add);
+  if (!isRepeatingTask(task)) return paths;
+
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const cap = new Date(today); cap.setDate(cap.getDate() + 730);
+  let limit = task.endDate ? parseYMD(task.endDate)
+                           : new Date(today.getFullYear(), today.getMonth() + 3, 0);
+  if (limit > cap) limit = cap;
+  let cursor = task.startDate ? parseYMD(task.startDate) : today;
+  if (cursor < today) cursor = today;
+  for (; cursor <= limit; cursor = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() + 1)) {
+    add(ymd(cursor));
+  }
+  return paths;
+}
+
 /* ---------- 고치기 ---------- */
 const now = () => Date.now();
 const newID = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2)).toLowerCase();
@@ -973,15 +1025,9 @@ async function addTask(categoryId) {
   };
   const paths = { [`tasks/${taskId}`]: task };
 
-  // 보고 있는 날짜에 해당하면 그날 기록도 함께 만든다.
-  // 아니면 앱이 열릴 때 규칙에 맞는 날짜로 만들어 준다.
+  // 보고 있는 날짜(지난 날짜일 수도 있다)와 앞날의 반복 기록을 함께 만든다.
   const showsToday = occursOn(task, selected);
-  if (showsToday) {
-    paths[`instances/${newID()}`] = {
-      taskId, date: dateKey, isDone: false, photoCount: 0,
-      updatedAt: now(), deletedAt: null
-    };
-  }
+  Object.assign(paths, forwardInstancePaths(taskId, task, [dateKey]));
   await write(paths, "추가하지 못했습니다");
   if (!showsToday) {
     toast("추가했습니다.\n이 날짜는 반복 규칙에 없어서 지금 화면에는 나오지 않습니다.");
@@ -1110,15 +1156,28 @@ async function renameTask(taskId, current) {
 async function setRecurrence(taskId, task) {
   const value = await askTaskForm("반복 설정", task, false);
   if (!value) return;
-  await write({
+  const stamp = now();
+  const changed = { ...task, recurrence: value.recurrence, weekdayMask: value.weekdayMask,
+                    monthDay: value.monthDay, startDate: value.startDate, endDate: value.endDate };
+  const paths = {
     [`tasks/${taskId}/recurrence`]: value.recurrence,
     [`tasks/${taskId}/weekdayMask`]: value.weekdayMask,
     [`tasks/${taskId}/monthDay`]: value.monthDay,
     [`tasks/${taskId}/startDate`]: value.startDate,
     [`tasks/${taskId}/endDate`]: value.endDate,
-    [`tasks/${taskId}/updatedAt`]: now()
-  }, "반복을 저장하지 못했습니다");
-  toast("반복을 저장했습니다.\n날짜별 항목은 앱을 열 때 만들어집니다.");
+    [`tasks/${taskId}/updatedAt`]: stamp
+  };
+  // 새 규칙에서 빠진 앞날의 안 끝낸 기록은 지우고, 새 규칙에 맞는 날은 만든다.
+  const todayKey = ymd(new Date());
+  for (const [id, v] of alive(state.instances)) {
+    if (v.taskId === taskId && !v.isDone && v.date > todayKey && !occursOn(changed, parseYMD(v.date))) {
+      paths[`instances/${id}/deletedAt`] = stamp;
+      paths[`instances/${id}/updatedAt`] = stamp;
+    }
+  }
+  Object.assign(paths, forwardInstancePaths(taskId, changed));
+  await write(paths, "반복을 저장하지 못했습니다");
+  toast("반복을 저장했습니다.");
 }
 
 async function removeInstance(instanceId, title) {
