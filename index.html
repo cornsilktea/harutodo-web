@@ -941,6 +941,7 @@ function askTaskForm(headline, task, withTitle) {
 /// 그 날짜에 이 할 일이 나타나는지(앱의 반복 규칙과 같은 계산).
 function occursOn(task, date) {
   const key = ymd(date);
+  if ((task.skippedDays || []).includes(key)) return false;
   if (task.startDate && key < task.startDate) return false;
   if (task.endDate && key > task.endDate) return false;
   switch (task.recurrence) {
@@ -1184,8 +1185,18 @@ async function removeInstance(instanceId, title) {
   const ok = await askConfirm("이 날에서만 지우기",
     `‘${title}’ 을(를) 이 날짜에서 지웁니다.\n다른 날의 기록은 그대로 남습니다.`, "지우기");
   if (!ok) return;
-  await write({ [`instances/${instanceId}/deletedAt`]: now(),
-                [`instances/${instanceId}/updatedAt`]: now() }, "지우지 못했습니다");
+  const stamp = now();
+  const paths = { [`instances/${instanceId}/deletedAt`]: stamp,
+                  [`instances/${instanceId}/updatedAt`]: stamp };
+  const instance = state.instances[instanceId];
+  const task = instance && state.tasks[instance.taskId];
+  if (task && isRepeatingTask(task)) {
+    // 지운 기록만으로는 앱이 앞날을 다시 만들 수 있어서, 건너뛴 날짜도 함께 남긴다.
+    paths[`tasks/${instance.taskId}/skippedDays`] =
+      [...new Set([...(task.skippedDays || []), instance.date])];
+    paths[`tasks/${instance.taskId}/updatedAt`] = stamp;
+  }
+  await write(paths, "지우지 못했습니다");
 }
 
 async function removeTask(taskId, title) {
