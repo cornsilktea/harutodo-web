@@ -231,6 +231,7 @@ import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChang
   from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 import { getDatabase, ref, onValue, update }
   from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
+import { StableId } from "./stable-id.mjs";
 
 const appEl = document.getElementById("app");
 const authBtn = document.getElementById("auth");
@@ -295,6 +296,21 @@ onAuthStateChanged(auth, user => {
   subscribe(user.uid);
 });
 
+/// 이 컴퓨터 시계가 서버와 어긋나 있어도 수정 시각(updatedAt)이 서버 기준이 되게 한다.
+/// 학교 PC 시계가 몇 분 늦으면 웹에서 고친 것이 앱의 "나중에 고친 쪽이 이긴다" 비교에서 져서 사라졌다.
+class ServerClock {
+  static #offset = 0;
+
+  static watch() {
+    onValue(ref(db, ".info/serverTimeOffset"), snap => { ServerClock.#offset = Number(snap.val()) || 0; });
+  }
+
+  static now() {
+    return Date.now() + ServerClock.#offset;
+  }
+}
+ServerClock.watch();
+
 function subscribe(uid) {
   appEl.innerHTML = `<div class="notice">불러오는 중…</div>`;
   onValue(ref(db, `users/${uid}`), snap => {
@@ -343,33 +359,79 @@ function skippedOnHoliday(task, dateKey) {
   return KoreanHolidays.isHoliday(parseYMD(dateKey));
 }
 
-function instancesOn(dateKey) {
-  return alive(state.instances)
-    .filter(([, v]) => v.date === dateKey)
-    .map(([id, v]) => ({ id, ...v, task: state.tasks[v.taskId] }))
-    .filter(x => x.task && !x.task.deletedAt && !x.task.isArchived)
-    // 이미 끝낸 기록은 공휴일이어도 남긴다.
-    .filter(x => x.isDone || !skippedOnHoliday(x.task, dateKey));
-}
+/// 화면 목록과 달력 표시(완료 동그라미)가 같은 기준으로 기록을 고르게 하는 곳.
+/// 예전에는 둘의 기준이 달라, 목록에는 안 보이는 안 끝낸 기록(지운 카테고리·끝난 카테고리 등)이
+/// 달력 개수에만 들어가 "다 끝냈는데 동그라미가 안 생기는" 날이 있었다.
+/// 같은 할 일의 같은 날 기록이 여러 개(웹·앱이 따로 만든 중복)면 한 줄로 묶는다.
+class DayLedger {
+  #byDate = new Map();
 
-/// 날짜별 { done, total, colors }. 모두 끝낸 날을 가려내는 데도 쓴다.
-function summaryByDate() {
-  const map = {};
-  for (const [, v] of alive(state.instances)) {
-    const task = state.tasks[v.taskId];
-    if (!task || task.deletedAt || task.isArchived) continue;
-    const cat = state.categories[task.categoryId];
-    if (cat && cat.endDate && cat.endDate < v.date) continue;
-    if (!v.isDone && skippedOnHoliday(task, v.date)) continue;
-    const entry = map[v.date] || (map[v.date] = { done: 0, total: 0, colors: [] });
-    entry.total += 1;
-    if (v.isDone) {
-      entry.done += 1;
-      const color = (cat && cat.colorHex) || "#4c8df6";
-      if (!entry.colors.includes(color)) entry.colors.push(color);
+  constructor(snapshot) {
+    const groups = new Map();
+    for (const [id, v] of alive(snapshot.instances)) {
+      const task = snapshot.tasks[v.taskId];
+      if (!DayLedger.isVisible(snapshot, v, task)) continue;
+      const key = `${v.taskId}|${v.date}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push({ id, ...v, task });
+    }
+    for (const members of groups.values()) {
+      const row = DayLedger.#merge(members);
+      if (!this.#byDate.has(row.date)) this.#byDate.set(row.date, []);
+      this.#byDate.get(row.date).push(row);
     }
   }
-  return map;
+
+  static isVisible(snapshot, instance, task) {
+    if (!task || task.deletedAt || task.isArchived) return false;
+    const cat = snapshot.categories[task.categoryId];
+    if (!cat || cat.deletedAt || (cat.endDate && cat.endDate < instance.date)) return false;
+    // 이미 끝낸 기록은 공휴일이어도 남긴다.
+    return instance.isDone || !skippedOnHoliday(task, instance.date);
+  }
+
+  /// 대표는 번호가 가장 작은 기록(앱의 중복 정리와 같은 규칙). 하나라도 끝냈으면 끝낸 것으로 본다.
+  static #merge(members) {
+    members.sort((a, b) => (a.id < b.id ? -1 : 1));
+    const head = members[0];
+    return {
+      ...head,
+      ids: members.map(m => m.id),
+      isDone: members.some(m => m.isDone),
+      titleOverride: members.map(m => m.titleOverride).find(Boolean) || null,
+      photoCount: members.reduce((sum, m) => sum + (m.photoCount || 0), 0)
+    };
+  }
+
+  rowsOn(dateKey) {
+    return this.#byDate.get(dateKey) || [];
+  }
+
+  /// 날짜별 { done, total, colors }. 모두 끝낸 날을 가려내는 데도 쓴다.
+  summary() {
+    const map = {};
+    for (const [date, rows] of this.#byDate) {
+      const entry = map[date] = { done: 0, total: rows.length, colors: [] };
+      for (const row of rows.filter(r => r.isDone)) {
+        entry.done += 1;
+        const color = state.categories[row.task.categoryId]?.colorHex || "#4c8df6";
+        if (!entry.colors.includes(color)) entry.colors.push(color);
+      }
+    }
+    return map;
+  }
+}
+
+let ledger = new DayLedger(state);
+
+function instancesOn(dateKey) {
+  return ledger.rowsOn(dateKey);
+}
+
+/// 화면에 보이는 한 줄(중복이면 여럿)의 기록 번호들.
+function idsOfRow(instanceId) {
+  const row = instancesOn(state.instances[instanceId]?.date).find(r => r.ids.includes(instanceId));
+  return row ? row.ids : [instanceId];
 }
 
 function activeCategoriesOn(dateKey) {
@@ -381,7 +443,8 @@ function activeCategoriesOn(dateKey) {
 
 /* ---------- 화면 ---------- */
 function render() {
-  const dots = summaryByDate();
+  ledger = new DayLedger(state);
+  const dots = ledger.summary();
   dateTitleEl.textContent = boardTitle(selected);
   dateTitleEl.classList.toggle("red", KoreanHolidays.isRedDay(selected));
   dateTitleEl.classList.toggle("sat", !KoreanHolidays.isRedDay(selected) && KoreanHolidays.isSaturday(selected));
@@ -546,9 +609,8 @@ function listHTML() {
   return moveAll + cats.map(cat => {
     const mine = rows
       .filter(r => r.task.categoryId === cat.id)
-      // 반복 일정은 완료 여부와 상관없이 카테고리 맨 아래에 모은다.
-      .sort((a, b) => (isRepeatingTask(a.task) - isRepeatingTask(b.task))
-        || (a.isDone - b.isDone)
+      // 반복 일정은 처음 만들 때만 맨 아래 순서를 받고, 그 뒤로는 끌어서 바꾼 순서를 그대로 따른다.
+      .sort((a, b) => (a.isDone - b.isDone)
         || ((a.task.sortOrder ?? 0) - (b.task.sortOrder ?? 0)));
     const done = mine.filter(r => r.isDone).length;
     const body = mine.length
@@ -591,8 +653,10 @@ async function moveAllToToday(dateKey) {
   const stamp = now();
   const paths = {};
   for (const r of rows) {
-    paths[`instances/${r.id}/date`] = todayKey;
-    paths[`instances/${r.id}/updatedAt`] = stamp;
+    for (const id of r.ids) {
+      paths[`instances/${id}/date`] = todayKey;
+      paths[`instances/${id}/updatedAt`] = stamp;
+    }
     // 반복하지 않는 할 일은 시작일이 곧 등장일이라 함께 옮겨준다.
     if (!r.task.recurrence || r.task.recurrence === "none") {
       paths[`tasks/${r.taskId}/startDate`] = todayKey;
@@ -633,15 +697,18 @@ function bind() {
   appEl.querySelectorAll(".row[data-row]").forEach(bindLongPress);
   appEl.querySelectorAll("[data-toggle]").forEach(el => el.addEventListener("click", async () => {
     const id = el.dataset.toggle;
-    const current = state.instances[id];
-    if (!current || !uid) return;
+    const row = instancesOn(state.instances[id]?.date).find(r => r.ids.includes(id));
+    if (!row || !uid) return;
     el.style.opacity = .4;
     try {
-      // 앱과 같은 규칙: 나중에 고친 쪽이 이기도록 수정 시각을 함께 올린다.
-      await update(ref(db, `users/${uid}/instances/${id}`), {
-        isDone: !current.isDone,
-        updatedAt: Date.now()
-      });
+      // 앱과 같은 규칙: 나중에 고친 쪽이 이기도록 수정 시각을 함께 올린다. 중복 기록도 함께 맞춘다.
+      const stamp = now();
+      const paths = {};
+      for (const each of row.ids) {
+        paths[`instances/${each}/isDone`] = !row.isDone;
+        paths[`instances/${each}/updatedAt`] = stamp;
+      }
+      await update(ref(db, `users/${uid}`), paths);
     } catch (e) {
       toast("바꾸지 못했습니다: " + e.message);
       el.style.opacity = 1;
@@ -961,22 +1028,33 @@ function occursOn(task, date) {
 /// (종료일이 있으면 그날까지, 없으면 다음 두 달 말일까지). 이걸 하지 않으면
 /// 웹에서 만든 반복이 앱을 열기 전까지 그 날짜 하나에만 보인다.
 /// 지운 기록(deletedAt)도 "있는 것"으로 쳐서 되살리지 않는다.
-function forwardInstancePaths(taskId, task, extraDateKeys = []) {
+/// 기록 번호는 (할 일, 날짜)에서 계산한 고정 번호라, 앱이 같은 날을 따로 만들어도 하나로 합쳐진다.
+async function forwardInstancePaths(taskId, task, extraDateKeys = []) {
   const paths = {};
   const have = new Set(Object.values(state.instances || {})
     .filter(v => v && v.taskId === taskId).map(v => v.date));
   const cat = state.categories[task.categoryId];
   const stamp = now();
+  const keys = [];
   const add = key => {
     if (have.has(key) || !occursOn(task, parseYMD(key))) return;
     if (cat && cat.endDate && cat.endDate < key) return;
     if (skippedOnHoliday(task, key)) return;
     have.add(key);
-    paths[`instances/${newID()}`] = { taskId, date: key, isDone: false, photoCount: 0,
-                                     updatedAt: stamp, deletedAt: null };
+    keys.push(key);
+  };
+  const flush = async () => {
+    for (const key of keys) {
+      const stable = await StableId.instance(taskId, key);
+      // 그 번호를 다른 날로 옮겨 간 기록이 쓰고 있으면 겹치지 않게 새 번호를 쓴다.
+      const id = state.instances?.[stable] ? newID() : stable;
+      paths[`instances/${id}`] = { taskId, date: key, isDone: false, photoCount: 0,
+                                   updatedAt: stamp, deletedAt: null };
+    }
+    return paths;
   };
   extraDateKeys.forEach(add);
-  if (!isRepeatingTask(task)) return paths;
+  if (!isRepeatingTask(task)) return flush();
 
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const cap = new Date(today); cap.setDate(cap.getDate() + 730);
@@ -988,11 +1066,11 @@ function forwardInstancePaths(taskId, task, extraDateKeys = []) {
   for (; cursor <= limit; cursor = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() + 1)) {
     add(ymd(cursor));
   }
-  return paths;
+  return flush();
 }
 
 /* ---------- 고치기 ---------- */
-const now = () => Date.now();
+const now = () => ServerClock.now();
 const newID = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2)).toLowerCase();
 
 async function write(paths, failMessage) {
@@ -1028,7 +1106,7 @@ async function addTask(categoryId) {
 
   // 보고 있는 날짜(지난 날짜일 수도 있다)와 앞날의 반복 기록을 함께 만든다.
   const showsToday = occursOn(task, selected);
-  Object.assign(paths, forwardInstancePaths(taskId, task, [dateKey]));
+  Object.assign(paths, await forwardInstancePaths(taskId, task, [dateKey]));
   await write(paths, "추가하지 못했습니다");
   if (!showsToday) {
     toast("추가했습니다.\n이 날짜는 반복 규칙에 없어서 지금 화면에는 나오지 않습니다.");
@@ -1092,18 +1170,20 @@ async function moveInstance(instanceId, targetKey) {
   if (!task) return;
 
   // 옮길 날에 같은 할 일이 이미 있으면 겹쳐 쓰지 않는다.
+  const ids = idsOfRow(instanceId);
   const clash = alive(state.instances).some(([id, v]) =>
-    id !== instanceId && v.taskId === instance.taskId && v.date === targetKey);
+    !ids.includes(id) && v.taskId === instance.taskId && v.date === targetKey);
   if (clash) {
     toast(`${shortDay(targetKey)}에는 ‘${task.title}’ 이(가) 이미 있습니다.`);
     return;
   }
 
   const stamp = now();
-  const paths = {
-    [`instances/${instanceId}/date`]: targetKey,
-    [`instances/${instanceId}/updatedAt`]: stamp
-  };
+  const paths = {};
+  for (const id of ids) {
+    paths[`instances/${id}/date`] = targetKey;
+    paths[`instances/${id}/updatedAt`] = stamp;
+  }
   // 반복하지 않는 할 일은 시작일이 곧 등장일이라 함께 옮겨준다.
   if (!task.recurrence || task.recurrence === "none") {
     paths[`tasks/${instance.taskId}/startDate`] = targetKey;
@@ -1141,10 +1221,13 @@ async function renameDay(instanceId, current) {
 }
 
 async function setDayTitle(instanceId, title) {
-  await write({
-    [`instances/${instanceId}/titleOverride`]: title === null ? null : title,
-    [`instances/${instanceId}/updatedAt`]: now()
-  }, "이름을 바꾸지 못했습니다");
+  const stamp = now();
+  const paths = {};
+  for (const id of idsOfRow(instanceId)) {
+    paths[`instances/${id}/titleOverride`] = title === null ? null : title;
+    paths[`instances/${id}/updatedAt`] = stamp;
+  }
+  await write(paths, "이름을 바꾸지 못했습니다");
 }
 
 async function renameTask(taskId, current) {
@@ -1161,6 +1244,7 @@ async function setRecurrence(taskId, task) {
   const changed = { ...task, recurrence: value.recurrence, weekdayMask: value.weekdayMask,
                     monthDay: value.monthDay, startDate: value.startDate, endDate: value.endDate };
   const paths = {
+    ...RepeatOrder.bottomPathsIfNewlyRepeating(taskId, task, value.recurrence),
     [`tasks/${taskId}/recurrence`]: value.recurrence,
     [`tasks/${taskId}/weekdayMask`]: value.weekdayMask,
     [`tasks/${taskId}/monthDay`]: value.monthDay,
@@ -1176,7 +1260,7 @@ async function setRecurrence(taskId, task) {
       paths[`instances/${id}/updatedAt`] = stamp;
     }
   }
-  Object.assign(paths, forwardInstancePaths(taskId, changed));
+  Object.assign(paths, await forwardInstancePaths(taskId, changed));
   await write(paths, "반복을 저장하지 못했습니다");
   toast("반복을 저장했습니다.");
 }
@@ -1186,8 +1270,11 @@ async function removeInstance(instanceId, title) {
     `‘${title}’ 을(를) 이 날짜에서 지웁니다.\n다른 날의 기록은 그대로 남습니다.`, "지우기");
   if (!ok) return;
   const stamp = now();
-  const paths = { [`instances/${instanceId}/deletedAt`]: stamp,
-                  [`instances/${instanceId}/updatedAt`]: stamp };
+  const paths = {};
+  for (const id of idsOfRow(instanceId)) {
+    paths[`instances/${id}/deletedAt`] = stamp;
+    paths[`instances/${id}/updatedAt`] = stamp;
+  }
   const instance = state.instances[instanceId];
   const task = instance && state.tasks[instance.taskId];
   if (task && isRepeatingTask(task)) {
@@ -1197,6 +1284,22 @@ async function removeInstance(instanceId, title) {
     paths[`tasks/${instance.taskId}/updatedAt`] = stamp;
   }
   await write(paths, "지우지 못했습니다");
+}
+
+/// 반복 일정은 처음 반복으로 정할 때 카테고리 맨 아래 순서를 받는다. 그 뒤로는 끌어서 바꾼 순서를 따른다.
+class RepeatOrder {
+  static bottomOf(categoryId, exceptTaskId = null) {
+    return alive(state.tasks)
+      .filter(([id, t]) => t.categoryId === categoryId && id !== exceptTaskId)
+      .reduce((max, [, t]) => Math.max(max, (t.sortOrder ?? 0) + 1), 0);
+  }
+
+  static bottomPathsIfNewlyRepeating(taskId, task, nextRecurrence) {
+    const becomesRepeating = !isRepeatingTask(task) && nextRecurrence && nextRecurrence !== "none";
+    return becomesRepeating
+      ? { [`tasks/${taskId}/sortOrder`]: RepeatOrder.bottomOf(task.categoryId, taskId) }
+      : {};
+  }
 }
 
 async function removeTask(taskId, title) {

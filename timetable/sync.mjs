@@ -55,19 +55,19 @@ class TimetableSyncApp {
 
     const store = new TodoStore({
       uid: process.env.HARU_UID ?? this.#fail("HARU_UID 가 없습니다."),
-      categoryName: this.#config.categoryName,
       databaseURL: SiteScripts.firebaseConfig().databaseURL
     });
     let report;
     try {
       report = await store.sync(plan, {
+        categoryName: this.#config.categoryName,
         dryRun: this.#dryRun,
         retireRecurringFrom: this.#mode === "semester" ? this.#config.startDate : null
       });
     } finally {
       await store.close();
     }
-    console.log(`${this.#dryRun ? "(미리보기) " : ""}새로 ${report.created} · 고침 ${report.updated} · 되살림 ${report.restored} · 뺌 ${report.removed} · 옛 반복 정리 ${report.retired}`);
+    console.log(`${this.#dryRun ? "(미리보기) " : ""}새로 ${report.created} · 고침 ${report.updated} · 되살림 ${report.restored} · 뺌 ${report.removed} · 옛 반복 정리 ${report.retired} · 옛 번호 정리 ${report.legacy}`);
   }
 
   async #fetchWeeks() {

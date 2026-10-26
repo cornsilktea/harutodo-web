@@ -46,7 +46,7 @@ export class LessonPlanner {
     const label = `${lesson.grade}-${lesson.cls}`;
     return {
       ...lesson,
-      id: `tt-${lesson.date}-${lesson.period}-${label}`,
+      key: `tt-${lesson.date}-${lesson.period}-${label}`,
       title: `${lesson.period}교시 ${label} ${lesson.subject}${lesson.changed ? " (변경)" : ""}`,
       sortOrder: lesson.period * 100 + lesson.grade * 10 + lesson.cls
     };
