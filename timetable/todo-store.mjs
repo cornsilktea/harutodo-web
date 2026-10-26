@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { initializeApp, cert } from "firebase-admin/app";
+import { initializeApp, cert, getApp, deleteApp } from "firebase-admin/app";
 import { getDatabase } from "firebase-admin/database";
 import { Clock } from "./clock.mjs";
 
@@ -19,6 +19,11 @@ export class TodoStore {
     this.#categoryName = categoryName;
     initializeApp({ credential: cert(TodoStore.#serviceAccount()), databaseURL });
     this.#root = getDatabase().ref(`users/${uid}`);
+  }
+
+  /// 열어 둔 DB 연결을 닫는다. 안 닫으면 일이 끝나도 프로그램이 종료되지 않는다.
+  async close() {
+    await deleteApp(getApp());
   }
 
   static #serviceAccount() {

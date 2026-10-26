@@ -58,10 +58,15 @@ class TimetableSyncApp {
       categoryName: this.#config.categoryName,
       databaseURL: SiteScripts.firebaseConfig().databaseURL
     });
-    const report = await store.sync(plan, {
-      dryRun: this.#dryRun,
-      retireRecurringFrom: this.#mode === "semester" ? this.#config.startDate : null
-    });
+    let report;
+    try {
+      report = await store.sync(plan, {
+        dryRun: this.#dryRun,
+        retireRecurringFrom: this.#mode === "semester" ? this.#config.startDate : null
+      });
+    } finally {
+      await store.close();
+    }
     console.log(`${this.#dryRun ? "(미리보기) " : ""}새로 ${report.created} · 고침 ${report.updated} · 되살림 ${report.restored} · 뺌 ${report.removed} · 옛 반복 정리 ${report.retired}`);
   }
 
