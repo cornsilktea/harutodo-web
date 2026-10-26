@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import { Clock } from "./clock.mjs";
+import { AcademicCalendar } from "./academic-calendar.mjs";
 import { ComciClient } from "./comci-client.mjs";
 import { WeekTimetable } from "./week-timetable.mjs";
 import { LessonPlanner } from "./lesson-planner.mjs";
@@ -23,8 +24,8 @@ class SiteScripts {
 }
 
 /// 사용법: node sync.mjs <daily|semester> [--dry-run] [--today=yyyy-MM-dd]
-///   semester : 학기 초에 한 번. 시작일부터 학기 끝까지 넣고, 카테고리의 옛 반복 일정을 시작일 전날로 끝맺는다.
-///   daily    : 매일 아침. 오늘부터 2주 안의 실제 시간표(대체·교환 포함)로 고친다.
+///   daily    : 매일 아침. 오늘부터 그 학기 끝까지 맞춘다(2주 안은 대체·교환까지 반영한 실제 시간표).
+///   semester : daily 와 같고, 추가로 카테고리의 옛 반복 일정을 config.startDate 전날로 끝맺는다(처음 한 번).
 ///   --dry-run: 계획만 출력하고 아무것도 쓰지 않는다(서비스 계정 키 없이도 된다).
 class TimetableSyncApp {
   static CONFIG = new URL("config.json", import.meta.url);
@@ -45,13 +46,11 @@ class TimetableSyncApp {
     const holidays = SiteScripts.holidayCalendar();
     const planner = new LessonPlanner({
       teacherMask: this.#config.teacher,
-      isHoliday: key => holidays.isRedDay(Clock.localDate(key))
+      isHoliday: key => holidays.isRedDay(Clock.localDate(key)),
+      calendar: new AcademicCalendar(this.#config.terms)
     });
-    const plan = planner.plan({
-      weeks, mode: this.#mode, today: this.#today,
-      startDate: this.#config.startDate, semesterEnd: this.#config.semesterEnd
-    });
-    console.log(`${this.#mode} · ${plan.from} ~ ${plan.to} · 수업 ${plan.lessons.length}개`);
+    const plan = planner.plan({ weeks, today: this.#today, startDate: this.#config.startDate });
+    console.log(`${this.#mode} · ${plan.term?.name ?? "방학 중"} · ${plan.from} ~ ${plan.to} · 수업 ${plan.lessons.length}개`);
     if (this.#dryRun && !process.env.HARU_UID) return this.#printPlan(plan);
 
     const store = new TodoStore({

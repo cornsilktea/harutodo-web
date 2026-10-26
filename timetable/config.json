@@ -3,5 +3,8 @@
   "teacher": "정일*",
   "categoryName": "수업준비",
   "startDate": "2026-10-27",
-  "semesterEnd": "2026-12-31"
+  "terms": [
+    { "name": "1학기", "start": "03-01", "end": "07-25" },
+    { "name": "2학기", "start": "08-14", "end": "01-15" }
+  ]
 }

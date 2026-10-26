@@ -2,27 +2,25 @@ import { Clock } from "./clock.mjs";
 import { WeekTimetable } from "./week-timetable.mjs";
 
 /// 받아 온 주별 시간표에서 "넣어야 할 수업 목록"을 만든다.
-///   daily    : 오늘부터 2주 안(자료가 있는 날까지)의 실제 시간표(대체·교환 반영)
-///   semester : 시작일부터 학기 끝까지. 이번·다음 주는 실제 시간표, 그 뒤는 원래 시간표를 요일마다 반복
+/// 오늘(또는 시작일)부터 그 학기 끝까지: 컴시간이 알려 주는 이번·다음 주는 실제 시간표(대체·교환 반영),
+/// 그 뒤는 원래 시간표를 요일마다 반복하고 공휴일은 뺀다. 방학 중에는 비어 있다.
 export class LessonPlanner {
-  static DAILY_DAYS = 14;
-
   #teacherMask;
   #isHoliday;
+  #calendar;
 
-  constructor({ teacherMask, isHoliday }) {
+  constructor({ teacherMask, isHoliday, calendar }) {
     this.#teacherMask = teacherMask;
     this.#isHoliday = isHoliday;
+    this.#calendar = calendar;
   }
 
-  plan({ weeks, mode, today, startDate, semesterEnd }) {
+  plan({ weeks, today, startDate }) {
     if (weeks.length === 0) throw new Error("받아 온 시간표가 없습니다.");
     const from = today > startDate ? today : startDate;
-    const coveredEnd = weeks[weeks.length - 1].fridayKey;
-    const to = mode === "semester"
-      ? semesterEnd
-      : this.#earlier(Clock.addDays(today, LessonPlanner.DAILY_DAYS - 1), coveredEnd);
-    if (to < from) return { from, to, lessons: [] };
+    const term = this.#calendar.termAt(from);
+    if (!term) return { from, to: from, term: null, lessons: [] };
+    const to = term.end;
 
     const actualByDate = this.#groupByDate(weeks.flatMap(week =>
       week.lessonsOf(week.findTeacher(this.#teacherMask), WeekTimetable.DAILY)));
@@ -37,11 +35,11 @@ export class LessonPlanner {
       if (weekday > 5) continue;
       if (coveredDates.has(date)) {
         lessons.push(...(actualByDate.get(date) ?? []));
-      } else if (mode === "semester" && !this.#isHoliday(date)) {
+      } else if (!this.#isHoliday(date)) {
         lessons.push(...(baseByWeekday.get(weekday) ?? []).map(lesson => ({ ...lesson, date })));
       }
     }
-    return { from, to, lessons: lessons.map(lesson => this.#withIdentity(lesson)) };
+    return { from, to, term, lessons: lessons.map(lesson => this.#withIdentity(lesson)) };
   }
 
   #withIdentity(lesson) {
@@ -70,9 +68,5 @@ export class LessonPlanner {
       groups.get(key).push(lesson);
     }
     return groups;
-  }
-
-  #earlier(a, b) {
-    return a < b ? a : b;
   }
 }
