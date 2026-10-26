@@ -1,0 +1,36 @@
+name: 교사 시간표 가져오기
+
+# 매일 아침 6시 30분(한국 시간)에 오늘부터 2주치를 다시 가져온다.
+# 학기 초에는 Actions 탭에서 "Run workflow" → mode 를 semester 로 한 번 돌린다.
+on:
+  schedule:
+    - cron: "30 21 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "daily = 오늘부터 2주 / semester = 학기 초 전체(옛 반복 일정 정리 포함)"
+        type: choice
+        options: [daily, semester]
+        default: daily
+      dry_run:
+        description: "미리보기만(아무것도 쓰지 않음)"
+        type: boolean
+        default: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: timetable/package-lock.json
+      - run: npm ci
+        working-directory: timetable
+      - run: node sync.mjs ${{ inputs.mode || 'daily' }} ${{ inputs.dry_run && '--dry-run' || '' }}
+        working-directory: timetable
+        env:
+          HARU_UID: ${{ secrets.HARU_UID }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}

@@ -1,0 +1,12 @@
+{
+  "name": "harutodo-timetable-sync",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "daily": "node sync.mjs daily",
+    "semester": "node sync.mjs semester"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.0.0"
+  }
+}
