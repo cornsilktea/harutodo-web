@@ -657,10 +657,12 @@ async function moveAllToToday(dateKey) {
       paths[`instances/${id}/date`] = todayKey;
       paths[`instances/${id}/updatedAt`] = stamp;
     }
-    // 반복하지 않는 할 일은 시작일이 곧 등장일이라 함께 옮겨준다.
+    // 반복하지 않는 할 일은 시작일이 곧 등장일이라 함께 옮겨준다. 반복 일정은 원래 날을 건너뛴 날로 남긴다.
     if (!r.task.recurrence || r.task.recurrence === "none") {
       paths[`tasks/${r.taskId}/startDate`] = todayKey;
       paths[`tasks/${r.taskId}/updatedAt`] = stamp;
+    } else {
+      Object.assign(paths, SkipDays.paths(r.taskId, r.task, [dateKey], stamp));
     }
   }
   await write(paths, "옮기지 못했습니다");
@@ -1071,7 +1073,15 @@ async function forwardInstancePaths(taskId, task, extraDateKeys = []) {
 
 /* ---------- 고치기 ---------- */
 const now = () => ServerClock.now();
-const newID = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2)).toLowerCase();
+/// 앱은 UUID 모양의 번호만 받아들이므로, randomUUID 가 없는 옛 브라우저에서도 UUID 를 만든다.
+const newID = () => {
+  if (crypto.randomUUID) return crypto.randomUUID().toLowerCase();
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = [...b].map(x => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+};
 
 async function write(paths, failMessage) {
   if (!uid) return;
@@ -1188,6 +1198,9 @@ async function moveInstance(instanceId, targetKey) {
   if (!task.recurrence || task.recurrence === "none") {
     paths[`tasks/${instance.taskId}/startDate`] = targetKey;
     paths[`tasks/${instance.taskId}/updatedAt`] = stamp;
+  } else {
+    // 반복 일정을 옮기면 원래 날은 건너뛴 날로 남긴다. 안 그러면 앱이 원래 날에 다시 만든다.
+    Object.assign(paths, SkipDays.paths(instance.taskId, task, [instance.date], stamp));
   }
   await write(paths, "옮기지 못했습니다");
   toast(`${shortDay(targetKey)}로 옮겼습니다.`);
@@ -1277,13 +1290,20 @@ async function removeInstance(instanceId, title) {
   }
   const instance = state.instances[instanceId];
   const task = instance && state.tasks[instance.taskId];
-  if (task && isRepeatingTask(task)) {
-    // 지운 기록만으로는 앱이 앞날을 다시 만들 수 있어서, 건너뛴 날짜도 함께 남긴다.
-    paths[`tasks/${instance.taskId}/skippedDays`] =
-      [...new Set([...(task.skippedDays || []), instance.date])];
-    paths[`tasks/${instance.taskId}/updatedAt`] = stamp;
-  }
+  // 지운 기록만으로는 앱이 그날을 다시 만들 수 있어서(반복의 앞날 채우기, 반복 없는 일은 그날을 열 때),
+  // 반복 여부와 상관없이 건너뛴 날짜도 함께 남긴다.
+  if (task) Object.assign(paths, SkipDays.paths(instance.taskId, task, [instance.date], stamp));
   await write(paths, "지우지 못했습니다");
+}
+
+/// 할 일의 "건너뛴 날"(skippedDays). 앱은 이 날에 그 할 일의 기록을 다시 만들지 않는다.
+class SkipDays {
+  static paths(taskId, task, dateKeys, stamp) {
+    return {
+      [`tasks/${taskId}/skippedDays`]: [...new Set([...(task.skippedDays || []), ...dateKeys])].sort(),
+      [`tasks/${taskId}/updatedAt`]: stamp
+    };
+  }
 }
 
 /// 반복 일정은 처음 반복으로 정할 때 카테고리 맨 아래 순서를 받는다. 그 뒤로는 끌어서 바꾼 순서를 따른다.
