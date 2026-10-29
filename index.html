@@ -412,8 +412,9 @@ class DayLedger {
     const map = {};
     for (const [date, rows] of this.#byDate) {
       const entry = map[date] = { done: 0, total: rows.length, colors: [] };
-      for (const row of rows.filter(r => r.isDone)) {
-        entry.done += 1;
+      // 끝냈는지와 상관없이 할 일이 있는 카테고리 색을 찍는다(앞날에 일정이 있는 날을 달력에서 보이게).
+      for (const row of rows) {
+        if (row.isDone) entry.done += 1;
         const color = state.categories[row.task.categoryId]?.colorHex || "#4c8df6";
         if (!entry.colors.includes(color)) entry.colors.push(color);
       }
